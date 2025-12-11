@@ -195,6 +195,14 @@ Executor 遵循：
 ### 跨專案記憶
 所有專案共用同一個 brain.db，知識可跨專案使用。安裝腳本不會覆蓋現有資料庫。
 
+## 驗證安裝
+
+確認系統功能正常：
+
+```bash
+python ~/.claude/neuromorphic/scripts/verify_stories.py
+```
+
 ## 重置資料庫（謹慎）
 
 ```bash

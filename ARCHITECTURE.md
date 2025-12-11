@@ -311,8 +311,47 @@ from servers.facade import (
 | 版本 | 日期 | 說明 |
 |------|------|------|
 | 2.1.0 | 2025-01 | Stories 15-17: 三層查詢、增強驗證、Drift 偵測 |
-| 2.0.0 | 2024-12 | Phase 2: 多人協作支援，Code Graph |
-| 1.0.0 | 2024-11 | Phase 1: 基礎架構，Attention Tree |
+| 2.0.0 | 2024-12 | Stories 1-14: 基礎架構、Code Graph、Agents |
+| 1.0.0 | 2024-11 | 初版：Attention Tree 概念驗證 |
+
+### Stories 完成對照表
+
+<details>
+<summary>展開查看所有 Stories</summary>
+
+| Story | 功能 | 實作位置 |
+|-------|------|----------|
+| **Phase 1: 基礎架構** | | |
+| S01 | SSOT Schema | `brain/schema.sql` |
+| S02 | Graph Server | `servers/graph.py` |
+| S03 | SSOT Index 載入 | `servers/ssot.py` |
+| S04 | Type Registry | `servers/registry.py` |
+| S05 | Memory Server | `servers/memory.py` |
+| S06 | Task Queue | `servers/tasks.py` |
+| **Phase 2: Code Graph** | | |
+| S07 | Extractor 架構 | `tools/code_graph_extractor/` |
+| S08 | AST 解析 | `extractor.py` (TS/Py/Go) |
+| S09 | Code Graph Server | `servers/code_graph.py` |
+| **Phase 3: Agents** | | |
+| S10 | PFC Agent | `agents/pfc.md` |
+| S11 | Executor Agent | `agents/executor.md` |
+| S12 | Critic Agent | `agents/critic.md` |
+| **Phase 4: Integration** | | |
+| S13 | CLI 入口 | `cli/main.py` |
+| S14 | Facade API | `servers/facade.py` |
+| **Phase 5: 進階功能** | | |
+| S15 | PFC 三層查詢 | `facade.get_full_context()` |
+| S16 | Critic Graph 增強 | `facade.validate_with_graph()` |
+| S17 | Drift Detector | `servers/drift.py`, `agents/drift-detector.md` |
+
+</details>
+
+### 驗證
+
+```bash
+python scripts/verify_stories.py        # 完整驗證
+python scripts/verify_stories.py -s 15  # 只驗證 Story 15
+```
 
 ---
 
