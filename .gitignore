@@ -6,6 +6,13 @@ __pycache__/
 .Python
 *.egg-info/
 .eggs/
+.venv/
+venv/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
 
 # Database (keep example only)
 brain/brain.db
