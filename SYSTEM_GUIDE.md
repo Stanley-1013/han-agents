@@ -55,6 +55,123 @@ subtask_1 = create_subtask(task_id, "子任務 1", assigned_agent='executor')
 subtask_2 = create_subtask(task_id, "子任務 2", depends_on=[subtask_1])
 ```
 
+---
+
+## 專案初始化 SOP
+
+將 Neuromorphic 系統導入現有專案時，請依照以下步驟：
+
+### Step 1：執行初始化腳本
+
+```bash
+python ~/.claude/neuromorphic/scripts/init_project.py <project_name>
+```
+
+這會在專案中建立 `.neuromorphic.py` 設定檔，並在資料庫中註冊專案。
+
+### Step 2：建立 SSOT INDEX（導航圖）
+
+在專案中建立 `.ssot/INDEX.md`，作為專案文檔的**導航圖**：
+
+```bash
+mkdir -p .ssot
+touch .ssot/INDEX.md
+```
+
+**重要**：INDEX 使用 `ref` 字段**指向現有文檔**，不複製內容。
+
+```yaml
+# .ssot/INDEX.md
+
+## Flows
+
+flows:
+  - id: flow.auth
+    name: 認證流程
+    ref: docs/flows/auth.md      # 指向現有文檔
+
+  - id: flow.payment
+    name: 付款流程
+    ref: docs/flows/payment.md
+
+## Docs
+
+docs:
+  - id: doc.prd
+    name: 產品需求文檔
+    ref: docs/PRD.md             # 指向現有 PRD
+
+  - id: doc.sa
+    name: 系統架構
+    ref: docs/SA.md
+
+  - id: doc.tdd
+    name: 技術設計
+    ref: docs/TDD.md
+
+## Domains
+
+domains:
+  - id: domain.user
+    name: 用戶模組
+    ref: src/modules/user/
+
+  - id: domain.order
+    name: 訂單模組
+    ref: src/modules/order/
+```
+
+> **導航圖設計理念**：INDEX 是一張地圖，告訴系統「PRD 在哪、Flow 在哪」，不是把所有文檔都複製進來。這樣維護成本低，且利用現有文檔結構。
+
+### Step 3：建立 Code Graph（建議）
+
+同步程式碼結構到 Graph，讓系統能做更精準的影響分析：
+
+```python
+import sys, os
+sys.path.insert(0, os.path.expanduser('~/.claude/neuromorphic'))
+from servers.facade import sync
+
+# 同步當前專案
+project = os.path.basename(os.getcwd())
+result = sync(project)
+print(f"同步完成: {result['nodes_count']} nodes, {result['edges_count']} edges")
+```
+
+### Step 4：匯入知識到 Memory（可選）
+
+如果專案有既有的 SOP、最佳實踐文檔，可匯入到 Memory：
+
+```python
+from servers.memory import store_memory
+
+store_memory(
+    category='sop',
+    content='1. 執行測試\n2. 建置\n3. 部署',
+    title='部署流程 SOP',
+    project='my-project',
+    importance=8
+)
+```
+
+### 初始化後的使用方式
+
+初始化完成後，PFC 執行三層查詢時會自動：
+
+1. **SSOT 層**：讀取 INDEX，透過 `ref` 載入對應文檔內容
+2. **Code Graph 層**：查詢相關程式碼檔案
+3. **Memory 層**：搜尋相關經驗和模式
+
+```python
+from servers.facade import get_full_context
+
+branch = {'flow_id': 'flow.auth', 'domain_ids': ['domain.user']}
+context = get_full_context(branch, project_name="my-project")
+# context['ssot']['flow_spec'] 會自動載入 docs/flows/auth.md 的內容
+```
+
+---
+
 ## Agent 協作流程
 
 ### 完整執行循環

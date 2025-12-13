@@ -69,6 +69,10 @@ parse_index() -> Dict
 get_node_by_id(node_id: str) -> Optional[Dict]
     根據 node id 獲取節點信息
     例如: get_node_by_id('flow.auth')
+
+validate_index_refs(project_dir: str = None) -> Dict
+    驗證 INDEX 中所有 ref 指向的檔案是否存在
+    返回 {'valid': bool, 'total': int, 'valid_refs': [...], 'missing_refs': [...]}
 """
 
 # =============================================================================
@@ -441,6 +445,75 @@ def validate_branch(branch: Dict[str, Any], project_dir: Optional[str] = None) -
     for domain_id in domain_ids:
         if domain_id not in known_domain_ids:
             result['warnings'].append(f"domain_id '{domain_id}' 不在 INDEX 中")
+
+    return result
+
+
+def validate_index_refs(project_dir: Optional[str] = None) -> Dict[str, Any]:
+    """
+    驗證 INDEX 中所有 ref 指向的檔案是否存在
+
+    Args:
+        project_dir: 專案目錄（用於解析相對路徑）
+
+    Returns:
+        {
+            'valid': bool,
+            'total': int,
+            'valid_refs': [...],
+            'missing_refs': [...],
+            'errors': [...]
+        }
+    """
+    result = {
+        'valid': True,
+        'total': 0,
+        'valid_refs': [],
+        'missing_refs': [],
+        'errors': []
+    }
+
+    index_data = parse_index(project_dir)
+
+    # 決定基礎路徑
+    if project_dir:
+        base_path = Path(project_dir)
+    else:
+        base_path = Path(SSOT_DIR).parent.parent  # neuromorphic 根目錄
+
+    # 遍歷所有類型的節點
+    for node_type, nodes in index_data.items():
+        if not isinstance(nodes, list):
+            continue
+
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+
+            # 支援多種 ref 字段名
+            ref = node.get('ref') or node.get('spec') or node.get('file') or node.get('path')
+            if not ref:
+                continue
+
+            result['total'] += 1
+            node_id = node.get('id', 'unknown')
+
+            # 解析路徑
+            ref_path = base_path / ref
+
+            if ref_path.exists():
+                result['valid_refs'].append({
+                    'node_id': node_id,
+                    'ref': ref,
+                    'path': str(ref_path)
+                })
+            else:
+                result['missing_refs'].append({
+                    'node_id': node_id,
+                    'ref': ref,
+                    'expected_path': str(ref_path)
+                })
+                result['valid'] = False
 
     return result
 

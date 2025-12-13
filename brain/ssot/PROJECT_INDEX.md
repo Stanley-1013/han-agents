@@ -1,7 +1,10 @@
 # Project Index (L1) - Neuromorphic
 
-> 這是 Neuromorphic 專案的導航目錄，列出所有 Flow、Domain、API 等。
-> 使用 node id 格式，可直接轉換為 Graph nodes。
+> **導航圖**：INDEX 是專案的導航地圖，使用 `ref` 指向現有文檔，不複製內容。
+>
+> - `ref` 可指向文檔檔案（如 `docs/PRD.md`）或程式碼檔案（如 `servers/auth.py`）
+> - 系統會透過 `ref` 自動載入對應內容
+> - 維護簡單：文檔更新時無需同步 INDEX
 
 ---
 
@@ -271,20 +274,45 @@ tests:
 
 ## 維護說明
 
-1. **添加新 Flow/Domain/API 時**：
-   - 使用 `[type].[name]` 格式作為 id
-   - 確保 id 全局唯一
-   - 更新 ref 指向實際檔案
+### 導航圖設計原則
 
-2. **Node ID 命名規則**：
-   - `flow.xxx` - 業務流程
-   - `domain.xxx` - 業務領域
-   - `api.xxx.yyy` - API 端點
-   - `cmd.xxx` - CLI 命令
-   - `tool.xxx` - 獨立工具
-   - `test.xxx` - 測試文件
+**INDEX 是「地圖」，不是「內容庫」**：
+- ✅ 使用 `ref` 指向現有文檔（PRD、SA、SD、TDD 等）
+- ✅ 文檔更新時，無需同步 INDEX
+- ❌ 不要將文檔內容複製到 INDEX 中
 
-3. **關係說明**：
-   - `flow -> domain`: uses (流程使用領域)
-   - `api -> flow`: implements (API 實現流程)
-   - `test -> flow/domain`: covers (測試覆蓋)
+### 添加新項目
+
+1. **使用 `[type].[name]` 格式作為 id**
+2. **確保 id 全局唯一**
+3. **用 `ref` 指向實際檔案**
+
+```yaml
+# 範例：新增一個 Flow
+flows:
+  - id: flow.checkout
+    name: 結帳流程
+    description: 購物車結帳流程
+    ref: docs/flows/checkout.md  # 指向現有文檔
+```
+
+### Node ID 命名規則
+
+| 前綴 | 用途 | 範例 |
+|------|------|------|
+| `flow.xxx` | 業務流程 | `flow.auth`, `flow.payment` |
+| `domain.xxx` | 業務領域 | `domain.user`, `domain.order` |
+| `api.xxx.yyy` | API 端點 | `api.auth.login` |
+| `doc.xxx` | 文檔 | `doc.prd`, `doc.sa` |
+| `cmd.xxx` | CLI 命令 | `cmd.sync` |
+| `tool.xxx` | 獨立工具 | `tool.extractor` |
+| `test.xxx` | 測試文件 | `test.auth` |
+
+### 關係說明
+
+| 關係 | 說明 |
+|------|------|
+| `flow -> domain` | 流程使用領域 (uses) |
+| `api -> flow` | API 實現流程 (implements) |
+| `test -> flow/domain` | 測試覆蓋 (covers) |
+| `doc -> flow` | 文檔描述流程 (describes) |
