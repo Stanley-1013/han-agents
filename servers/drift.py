@@ -28,8 +28,11 @@ from datetime import datetime, timedelta
 SCHEMA = """
 === Drift Detection API ===
 
-detect_all_drifts(project) -> DriftReport
+detect_all_drifts(project, project_dir=None) -> DriftReport
     偵測專案所有 SSOT-Code 偏差
+    Args:
+        project: 專案名稱（用於 Code Graph 查詢）
+        project_dir: 專案目錄路徑（用於讀取專案級 SSOT .claude/pfc/INDEX.md）
     Returns: {
         'has_drift': bool,
         'drift_count': int,
@@ -112,9 +115,14 @@ class DriftReport:
 # Detection Logic
 # =============================================================================
 
-def detect_all_drifts(project: str) -> DriftReport:
+def detect_all_drifts(project: str, project_dir: str = None) -> DriftReport:
     """
     偵測專案所有 SSOT-Code 偏差
+
+    Args:
+        project: 專案名稱（用於 Code Graph 查詢）
+        project_dir: 專案目錄路徑（用於讀取專案級 SSOT INDEX）
+                     如果不傳，只會檢查全局 SSOT
 
     檢查項目：
     1. SSOT 定義的 Flow 是否有對應實作
@@ -132,9 +140,9 @@ def detect_all_drifts(project: str) -> DriftReport:
         drift_id += 1
         return f"drift-{project}-{drift_id:04d}"
 
-    # 1. 取得 SSOT 定義
+    # 1. 取得 SSOT 定義（優先使用專案級 INDEX）
     try:
-        ssot_data = parse_index()
+        ssot_data = parse_index(project_dir)
         # parse_index 返回 {'flows': [...], 'domains': [...], ...}
         # 展平為節點列表
         ssot_nodes = []
@@ -444,9 +452,14 @@ def detect_coverage_gaps(project: str) -> List[Dict]:
 # Reporting
 # =============================================================================
 
-def get_drift_summary(project: str) -> str:
-    """取得偏差摘要（Markdown 格式）"""
-    report = detect_all_drifts(project)
+def get_drift_summary(project: str, project_dir: str = None) -> str:
+    """取得偏差摘要（Markdown 格式）
+
+    Args:
+        project: 專案名稱
+        project_dir: 專案目錄路徑（用於讀取專案級 SSOT）
+    """
+    report = detect_all_drifts(project, project_dir)
 
     lines = [
         "# SSOT-Code Drift Report",

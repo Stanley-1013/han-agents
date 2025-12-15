@@ -49,9 +49,11 @@ from servers.drift import (
 )
 from servers.graph import get_graph_stats, list_nodes
 
-# 取得專案名稱
-project = os.path.basename(os.getcwd())
+# 取得專案名稱和路徑
+project_dir = os.getcwd()
+project = os.path.basename(project_dir)
 print(f"專案: {project}")
+print(f"路徑: {project_dir}")
 
 # 1. 取得 Graph 狀態
 stats = get_graph_stats(project)
@@ -68,8 +70,8 @@ if stats['node_count'] == 0:
 ### 1. 全面偏差偵測
 
 ```python
-# 偵測所有偏差
-report = detect_all_drifts(project)
+# 偵測所有偏差（傳入 project_dir 以讀取專案級 SSOT）
+report = detect_all_drifts(project, project_dir)
 
 print(f"\n=== Drift Report ===")
 print(f"Has Drift: {report.has_drift}")

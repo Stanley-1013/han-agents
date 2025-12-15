@@ -534,8 +534,10 @@ print(formatted)
 ```python
 from servers.drift import detect_all_drifts, get_drift_summary
 
-project = os.path.basename(os.getcwd())
-report = detect_all_drifts(project)
+project_dir = os.getcwd()
+project = os.path.basename(project_dir)
+# 傳入 project_dir 以讀取專案級 SSOT（.claude/pfc/INDEX.md）
+report = detect_all_drifts(project, project_dir)
 if report.has_drift:
     print(get_drift_summary(project))
 ```
