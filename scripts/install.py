@@ -295,42 +295,39 @@ def ask_init_project_ssot(base_dir):
     # 建立目錄
     os.makedirs(pfc_dir, exist_ok=True)
 
-    # INDEX 模板 - 簡化版，指向專案現有文檔
+    # INDEX 模板 - 給 LLM 的指示
     project_name = os.path.basename(cwd)
     index_template = f'''# {project_name} - SSOT Index
 
-> 用 `ref` 指向專案內的技術文件，Agent 會自動載入對應內容。
+> **請 Claude 掃描專案後填入此檔案**
+>
+> 對 Claude 說：「請掃描專案，找出技術文件並更新 .claude/pfc/INDEX.md」
+
+## 格式說明
+
+用 `ref` 指向專案內的技術文件（相對路徑），Agent 會自動載入對應內容。
+
+```yaml
+docs:
+  - id: doc.xxx        # 唯一識別碼
+    name: 文件名稱      # 顯示名稱
+    ref: path/to/file  # 相對路徑
+```
 
 ## 技術文件
 
 ```yaml
 docs:
-  # 指向專案內的技術文件（相對路徑）
-  # - id: doc.prd
-  #   name: 產品需求文件
-  #   ref: docs/PRD.md
-  #
-  # - id: doc.architecture
-  #   name: 架構設計
-  #   ref: docs/ARCHITECTURE.md
-  #
-  # - id: doc.api
-  #   name: API 文件
-  #   ref: docs/API.md
+  # TODO: 請 Claude 掃描專案後填入
+  # 常見文件類型：PRD, ARCHITECTURE, API, README, CHANGELOG 等
 ```
 
 ## 主要程式碼
 
 ```yaml
 code:
-  # 指向主要程式碼入口（相對路徑）
-  # - id: code.main
-  #   name: 主程式
-  #   ref: src/main.py
-  #
-  # - id: code.models
-  #   name: 資料模型
-  #   ref: src/models/
+  # TODO: 請 Claude 掃描專案後填入
+  # 指向主要入口點、核心模組、資料模型等
 ```
 '''
 
