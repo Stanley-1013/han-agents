@@ -10,10 +10,10 @@ Works with any AI coding agent that supports custom skills/tools, including Clau
 
 ```bash
 # Clone to Claude Code skills directory
-git clone https://github.com/anthropics/cortex-agents.git ~/.claude/skills/cortex-agents
+git clone https://github.com/Stanley-1013/cortex-agents.git ~/.claude/skills/cortex-agents
 
 # Or for other AI agents, clone to your preferred location
-git clone https://github.com/anthropics/cortex-agents.git /path/to/skills/cortex-agents
+git clone https://github.com/Stanley-1013/cortex-agents.git /path/to/skills/cortex-agents
 ```
 
 ### Initialize Database
