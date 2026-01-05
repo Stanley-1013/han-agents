@@ -13,6 +13,10 @@ import os
 import sqlite3
 import shutil
 import sys
+
+# Windows console encoding fix
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 import json
 
 def check_dependencies():

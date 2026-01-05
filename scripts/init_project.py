@@ -8,6 +8,10 @@ import os
 import sys
 import sqlite3
 
+# Windows console encoding fix
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
 # 專案 SKILL.md 模板
 SKILL_TEMPLATE = '''---
 name: {project_name}

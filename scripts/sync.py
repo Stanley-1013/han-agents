@@ -12,8 +12,12 @@ import sys
 import os
 import argparse
 
-# 確保可以 import servers
-sys.path.insert(0, os.path.expanduser('~/.claude/skills/cortex-agents'))
+# Windows console encoding fix
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
+# 確保可以 import servers（使用相對路徑，相容所有平台）
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def sync_code_graph(project_path: str, project_name: str, incremental: bool = True):
