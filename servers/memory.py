@@ -14,6 +14,43 @@ BRAIN_DB = os.path.expanduser("~/.claude/neuromorphic/brain/brain.db")
 SCHEMA = """
 === Memory Server ===
 
+# 語義增強搜尋（推薦用於重要查詢）
+search_memory_semantic(query, project=None, limit=5, rerank_mode='claude', **kwargs) -> Dict
+    語義增強搜尋 - 混合 FTS5 召回 + 語義重排
+
+    Parameters:
+        query: 搜尋查詢
+        project: 專案名稱 (可選)
+        limit: 回傳筆數
+        rerank_mode: 重排模式
+            - 'claude': 返回候選 + prompt（由 Agent 執行重排）⭐ 推薦
+            - 'embedding': 使用本地嵌入模型（需安裝 sentence-transformers）
+            - 'none': 純 FTS5（等同 search_memory）
+        **kwargs: 傳遞給 search_memory 的其他參數（category, status, branch_flow 等）
+
+    Returns (claude 模式):
+        {
+            'candidates': [...],     # 20 條候選記憶
+            'rerank_prompt': str,    # 重排提示詞
+            'mode': 'claude_rerank'
+        }
+
+    Returns (embedding/none 模式):
+        {
+            'results': [...],        # 重排後的結果
+            'mode': 'embedding_rerank' | 'fts5_only' | 'fts5_fallback'
+        }
+
+    使用範例 (claude 模式):
+        result = search_memory_semantic("authentication error handling", rerank_mode='claude')
+        if result['mode'] == 'claude_rerank':
+            print(result['rerank_prompt'])
+            # Agent 輸出：[2, 0, 5]
+            # 然後取 result['candidates'][2], result['candidates'][0], result['candidates'][5]
+        else:
+            memories = result['results']
+
+# 標準全文搜尋
 search_memory(query, project=None, category=None, limit=5, status='active', include_all=False,
               branch_flow=None, branch_domain=None, branch_page=None) -> List[Dict]
     全文搜尋長期記憶
@@ -323,6 +360,100 @@ def search_memory(query: str, project: str = None,
     db.commit()
     db.close()
     return results
+
+
+def search_memory_semantic(
+    query: str,
+    project: str = None,
+    limit: int = 5,
+    rerank_mode: str = 'claude',
+    **kwargs
+) -> Dict:
+    """語義增強搜尋
+
+    混合搜尋架構：
+    1. FTS5 召回 - 快速取 top 30 候選
+    2. 語義重排 - Claude 或本地嵌入模型
+    3. 返回 top K 結果
+
+    Args:
+        query: 搜尋查詢
+        project: 專案名稱 (可選)
+        limit: 最終回傳數量
+        rerank_mode: 重排模式
+            - 'claude': 返回候選 + rerank prompt（由呼叫方執行）
+            - 'embedding': 使用本地嵌入模型重排
+            - 'none': 純 FTS5，等同原 search_memory()
+        **kwargs: 傳遞給 search_memory 的其他參數
+
+    Returns:
+        {
+            'results': [...],           # 最終結果（embedding/none 模式）
+            'candidates': [...],        # 候選記憶（claude 模式）
+            'rerank_prompt': str,       # 重排提示（claude 模式）
+            'mode': str                 # 使用的模式
+        }
+    """
+    # 空查詢處理
+    if not query or not query.strip():
+        return {
+            'results': [],
+            'mode': 'fts5_only'
+        }
+
+    # Step 1: FTS5 召回（擴大範圍）
+    candidates = search_memory(query, project, limit=30, **kwargs)
+
+    # 候選不足或不需重排時，直接返回
+    if rerank_mode == 'none' or len(candidates) <= limit:
+        return {
+            'results': candidates[:limit],
+            'mode': 'fts5_only'
+        }
+
+    if rerank_mode == 'claude':
+        # 準備 Claude 重排 prompt
+        rerank_context = "\n".join([
+            f"[{i}] **{c.get('title', 'Untitled')}**: {c['content'][:150]}..."
+            for i, c in enumerate(candidates[:20])
+        ])
+
+        return {
+            'candidates': candidates[:20],
+            'rerank_prompt': f"""根據查詢「{query}」的語義相關性，選出最相關的 {limit} 條記憶。
+
+{rerank_context}
+
+請返回最相關的記憶編號，格式：[0, 3, 7, ...]""",
+            'mode': 'claude_rerank'
+        }
+
+    if rerank_mode == 'embedding':
+        # 使用本地嵌入模型重排
+        try:
+            from servers.memory_embeddings import rerank_by_embedding, is_available
+            if is_available():
+                reranked = rerank_by_embedding(query, candidates, limit)
+                return {
+                    'results': reranked,
+                    'mode': 'embedding_rerank'
+                }
+            else:
+                # 嵌入模型不可用，降級為 FTS5
+                return {
+                    'results': candidates[:limit],
+                    'mode': 'fts5_fallback'
+                }
+        except ImportError:
+            # 模組不存在，降級為 FTS5
+            return {
+                'results': candidates[:limit],
+                'mode': 'fts5_fallback'
+            }
+
+    # 未知模式，回退為 FTS5
+    return {'results': candidates[:limit], 'mode': 'fallback'}
+
 
 def store_memory(category: str, content: str, title: str = None,
                  project: str = None, subcategory: str = None,
@@ -1044,6 +1175,7 @@ def get_project_context(project: str) -> Dict:
 __all__ = [
     'SCHEMA',
     'search_memory',
+    'search_memory_semantic',
     'store_memory',
     'calculate_similarity',
     'find_similar_memories',

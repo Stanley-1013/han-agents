@@ -162,27 +162,29 @@ if context['drift']['has_drift']:
 
 ### 3. 查詢策略記憶
 ```python
-# 在規劃任務前，先查詢相關策略和程序
-task_type = "unit test"  # 根據任務調整
+from servers.memory import search_memory_semantic
 
-# 使用 branch 過濾，提高召回精度
-strategies = search_memory(
-    f"{task_type} strategy",
-    branch_flow=branch.get('flow_id') if branch else None,
-    limit=3
-)
-procedures = search_memory(
-    f"{task_type} procedure",
-    branch_flow=branch.get('flow_id') if branch else None,
-    limit=3
+# ⭐ 使用語義搜尋（推薦）- 支援跨語言、同義詞
+task_type = "unit test"
+
+result = search_memory_semantic(
+    f"{task_type} strategy procedure",
+    limit=5,
+    rerank_mode='claude'
 )
 
-if strategies or procedures:
-    print("## 相關策略 (來自記憶)")
-    for m in strategies + procedures:
-        print(f"- **{m['title']}** (importance={m['importance']})")
-        print(f"  {m['content'][:150]}...")
-    print("請依據上述策略進行任務分解。")
+if result['mode'] == 'claude_rerank':
+    print("## 請從以下候選中選出最相關的策略：")
+    print(result['rerank_prompt'])
+    # Agent 輸出重排結果後取記憶
+else:
+    strategies = result['results']
+    if strategies:
+        print("## 相關策略 (來自記憶)")
+        for m in strategies:
+            print(f"- **{m['title']}** (importance={m['importance']})")
+            print(f"  {m['content'][:150]}...")
+        print("請依據上述策略進行任務分解。")
 ```
 
 ### 4. 建立主任務

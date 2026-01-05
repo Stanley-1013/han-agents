@@ -73,16 +73,28 @@ branch = get_task_branch(TASK_ID) or get_task_branch(task.get('parent_id'))
 
 ### 查詢相關記憶
 ```python
-# ⭐ 查詢相關記憶 - 避免重複踩坑
-keywords = task['description'].split()[:3]  # 取前3個關鍵字
-patterns = search_memory(' '.join(keywords) + ' pattern', limit=3)
-lessons = search_memory(' '.join(keywords) + ' lesson', limit=3)
+from servers.memory import search_memory_semantic
 
-if patterns or lessons:
-    print("## 相關記憶")
-    for m in patterns + lessons:
-        print(f"- **{m['title']}** (importance={m['importance']})")
-    print("請將上述模式/經驗應用到本次執行中。")
+# ⭐ 語義搜尋 - 避免重複踩坑（支援跨語言、同義詞）
+keywords = ' '.join(task['description'].split()[:5])
+
+result = search_memory_semantic(
+    f"{keywords} pattern lesson",
+    limit=5,
+    rerank_mode='claude'
+)
+
+if result['mode'] == 'claude_rerank':
+    print("## 請選出與本次任務最相關的記憶：")
+    print(result['rerank_prompt'])
+    # Agent 輸出重排結果
+else:
+    memories = result['results']
+    if memories:
+        print("## 相關記憶")
+        for m in memories:
+            print(f"- **{m['title']}** (importance={m['importance']})")
+        print("請將上述模式/經驗應用到本次執行中。")
 ```
 
 ## 執行任務

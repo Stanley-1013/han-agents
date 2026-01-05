@@ -34,6 +34,7 @@ print(MEMORY_SCHEMA)
 
 from servers.memory import (
     search_memory,
+    search_memory_semantic,  # ⭐ 語義增強搜尋
     store_memory,
     get_working_memory,
     set_working_memory,
@@ -55,7 +56,29 @@ from servers.memory import (
 
 ## 操作類型
 
-### 1. 搜尋記憶
+### 1. 語義搜尋（推薦）⭐
+```python
+# 語義增強搜尋 - 支援跨語言、同義詞匹配
+result = search_memory_semantic(
+    query="效能優化 Python",
+    project="my-project",
+    limit=5,
+    rerank_mode='claude'  # 'claude' | 'embedding' | 'none'
+)
+
+if result['mode'] == 'claude_rerank':
+    # Claude 模式：需要 Agent 執行重排
+    print("## 請從以下候選中選出最相關的記憶：")
+    print(result['rerank_prompt'])
+    # Agent 輸出：[2, 0, 5, 1, 4]
+    # 然後取記憶：memories = [result['candidates'][i] for i in [2, 0, 5, 1, 4]]
+else:
+    # embedding/none 模式：直接使用結果
+    for r in result['results']:
+        print(f"- {r['title']}: {r['content'][:100]}...")
+```
+
+### 2. 標準搜尋（純關鍵字）
 ```python
 results = search_memory(
     query="效能優化 Python",
@@ -68,7 +91,7 @@ for r in results:
     print(f"- {r['title']}: {r['content'][:100]}...")
 ```
 
-### 2. 儲存記憶
+### 3. 儲存記憶
 ```python
 # 儲存 SOP
 store_memory(
@@ -89,7 +112,7 @@ store_memory(
 )
 ```
 
-### 3. 工作記憶
+### 4. 工作記憶
 ```python
 # 讀取
 context = get_working_memory(task_id)
@@ -99,7 +122,7 @@ data = get_working_memory(task_id, 'filtered_data')
 set_working_memory(task_id, 'analysis_result', result)
 ```
 
-### 4. 情節記憶
+### 5. 情節記憶
 ```python
 # 記錄事件
 add_episode(
