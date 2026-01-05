@@ -14,8 +14,8 @@ from typing import List
 from dataclasses import dataclass
 from enum import Enum
 
-# 確保可以 import servers
-sys.path.insert(0, os.path.expanduser('~/.claude/skills/cortex-agents'))
+# 確保可以 import servers（使用相對路徑，相容所有平台）
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 class Status(Enum):
@@ -32,16 +32,56 @@ class DiagnosticResult:
     fix_hint: str = None
 
 
+def auto_init_database():
+    """自動初始化資料庫（如果不存在或缺少 tables）"""
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    brain_dir = os.path.join(base_dir, 'brain')
+    db_path = os.path.join(brain_dir, 'brain.db')
+    schema_path = os.path.join(brain_dir, 'schema.sql')
+
+    # 確保目錄存在
+    os.makedirs(brain_dir, exist_ok=True)
+
+    need_init = not os.path.exists(db_path)
+
+    # 檢查是否需要初始化 schema
+    if os.path.exists(db_path):
+        import sqlite3
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = [row[0] for row in cursor.fetchall()]
+            conn.close()
+            if 'tasks' not in tables:
+                need_init = True
+        except:
+            need_init = True
+
+    if need_init and os.path.exists(schema_path):
+        import sqlite3
+        print("🔧 Auto-initializing database...")
+        conn = sqlite3.connect(db_path)
+        with open(schema_path) as f:
+            conn.executescript(f.read())
+        conn.commit()
+        conn.close()
+        print(f"✅ Database initialized: {db_path}")
+
+    return db_path
+
+
 def check_database() -> DiagnosticResult:
     """檢查資料庫"""
-    db_path = os.path.expanduser('~/.claude/skills/cortex-agents/brain/brain.db')
+    # 使用相對路徑，相容 Windows/Mac/Linux
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    db_path = os.path.join(base_dir, 'brain', 'brain.db')
 
     if not os.path.exists(db_path):
         return DiagnosticResult(
             name="Database",
             status=Status.ERROR,
             message=f"Database not found: {db_path}",
-            fix_hint="Run: python ~/.claude/skills/cortex-agents/scripts/install.py"
+            fix_hint="Run: python scripts/install.py"
         )
 
     try:
@@ -223,6 +263,9 @@ def print_results(results: List[DiagnosticResult]) -> int:
 
 
 def main():
+    # 自動初始化資料庫（如果需要）
+    auto_init_database()
+
     results = run_diagnostics()
     return print_results(results)
 
