@@ -55,12 +55,59 @@ PFC 規劃任務 → 寫入 DB → 回報執行計畫
 
 ## 工作流程
 
-### 1. 初始化
+### 0. ⭐⭐⭐ Code Graph 查詢（必要第一步）
+
+> **重要**：無論人類是否指定範圍，PFC 都應該使用 Code Graph 確認完整範圍：
+> - 人類有指定範圍 → 以指定範圍為主，但用 Code Graph 檢查是否有**相關聯的檔案**需要一併處理
+> - 人類沒指定範圍 → PFC 自行使用 Code Graph 查詢完整檔案列表，確保不遺漏
+
 ```python
 import sys
 import os
 sys.path.insert(0, os.path.expanduser('~/.claude/skills/cortex-agents'))
 
+from servers.code_graph import get_code_nodes, get_code_dependencies
+
+# ⭐ 根據任務類型查詢相關檔案
+# 範例：Unit Test 任務 - 找出所有待測檔案
+project_name = "my-project"
+
+# 查詢所有 file 類型的節點
+all_files = get_code_nodes(project=project_name, kind='file', limit=500)
+
+# 過濾出 source 檔案（排除測試檔案）
+source_files = [
+    f for f in all_files
+    if f['file_path'].startswith('src/')
+    and not f['file_path'].endswith('.test.ts')
+    and not f['file_path'].endswith('.spec.ts')
+]
+
+print(f"## 找到 {len(source_files)} 個待測檔案")
+for f in source_files:
+    print(f"- {f['file_path']}")
+
+# ⭐ 查詢特定節點的依賴關係（用於判斷測試範圍）
+for f in source_files[:5]:  # 檢查前幾個
+    deps = get_code_dependencies(
+        project=project_name,
+        node_id=f['id'],
+        depth=1,
+        direction='outgoing'
+    )
+    if deps:
+        print(f"\n{f['file_path']} 依賴:")
+        for d in deps:
+            print(f"  - {d['file_path']} ({d['kind']})")
+```
+
+**為什麼這是必要步驟？**
+- 主對話的 glob 搜尋可能遺漏檔案（範圍限制、路徑錯誤）
+- Code Graph 包含完整的專案結構和依賴關係
+- PFC 規劃基於完整資訊，避免後續 Executor 任務漏掉檔案
+
+### 1. 初始化
+```python
 # 先查看 API 簽名（避免參數錯誤）
 from servers.tasks import SCHEMA as TASKS_SCHEMA
 from servers.memory import SCHEMA as MEMORY_SCHEMA

@@ -103,10 +103,15 @@ Task(
 )
 ```
 
+**⭐ 檔案範圍處理：**
+- 人類有指定範圍 → 以指定範圍為主，PFC 用 Code Graph 檢查**相關聯檔案**
+- 人類沒指定 → **PFC 自行使用 Code Graph 查詢完整範圍**，確保不遺漏
+
 **派發流程：**
-1. PFC 規劃後輸出「派發指令」（含 subagent_type + prompt）
-2. **主對話**使用 Task tool 執行派發
-3. Agent 完成後返回結果給主對話
+1. PFC 規劃前先用 **Code Graph 確認完整範圍**
+2. PFC 規劃後輸出「派發指令」（含 subagent_type + prompt）
+3. **主對話**使用 Task tool 執行派發
+4. Agent 完成後返回結果給主對話
 
 **範例 - 派發 Executor：**
 ```
