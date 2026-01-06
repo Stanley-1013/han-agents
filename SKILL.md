@@ -90,15 +90,40 @@ checkpoint = load_checkpoint(task_id)
 store_memory(category='pattern', title='Title', content='...', project='P', importance=8)
 ```
 
-## Dispatch Agent
+## Agent Dispatch (Claude Code Task Tool)
 
-```python
+**主對話必須使用 Claude Code Task tool 派發 agent：**
+
+```
+Task(
+    subagent_type='pfc',        # 或 executor, critic, researcher, memory, drift-detector
+    prompt='任務描述...'
+)
+```
+
+**派發流程：**
+1. PFC 規劃後輸出「派發指令」（含 subagent_type + prompt）
+2. **主對話**使用 Task tool 執行派發
+3. Agent 完成後返回結果給主對話
+
+**範例 - 派發 Executor：**
+```
 Task(
     subagent_type='executor',
     prompt=f'''TASK_ID = "{subtask_id}"
 Task: [description]
 Source: [file path]
 Steps: 1. Read 2. Execute 3. Verify'''
+)
+```
+
+**範例 - 派發 Critic：**
+```
+Task(
+    subagent_type='critic',
+    prompt=f'''TASK_ID = "{critic_task_id}"
+ORIGINAL_TASK_ID = "{original_task_id}"
+驗證任務產出...'''
 )
 ```
 
