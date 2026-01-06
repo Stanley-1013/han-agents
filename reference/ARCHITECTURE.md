@@ -11,10 +11,9 @@
 │                     SSOT Layer (Intent)                      │
 │                      「應該怎樣」                             │
 ├─────────────────────────────────────────────────────────────┤
-│  - PROJECT_DOCTRINE.md (核心原則)                            │
-│  - PROJECT_INDEX.md (L1 目錄)                                │
-│  - flows/*.md (Flow 規格)                                    │
-│  - domains/*.md (Domain 規格)                                │
+│  - SKILL.md (Skill 入口，按 Heading 分段組織連結)            │
+│  - reference/*.md (參考文檔)                                 │
+│  - 其他連結的 Markdown 文檔                                  │
 │                                                             │
 │  Tables: project_nodes, project_edges                        │
 └─────────────────────────────────────────────────────────────┘
@@ -163,6 +162,34 @@ python cli/doctor.py
 # - Git Hooks 安裝
 ```
 
+### 5. Agent vs Script 職責分離
+
+**問題**：腳本不應做語義判斷，那是 Agent 的工作。
+
+**解法**：腳本只提供結構化資料，Agent 做智慧分析。
+
+```python
+# ✅ Script 職責：提供資料
+def get_drift_context(project, project_dir) -> Dict:
+    """提供 SKILL.md 內容、連結列表、Code Graph 節點等結構化資料"""
+    return {
+        'skill_content': str,      # 完整 SKILL.md 內容
+        'skill_links': {...},      # parse_skill_links() 結果
+        'code_nodes': [...],       # Code Graph 節點
+        'code_files': [...],       # 檔案節點
+        'code_stats': {...},       # 統計資訊
+    }
+
+# ✅ Agent 職責：語義分析
+# Drift Agent 接收 get_drift_context() 資料
+# 判斷文檔描述 vs 實際程式碼的語義偏差
+# 產出可行動的偏差報告
+```
+
+**相關檔案**：
+- `servers/drift.py` - `get_drift_context()` 提供資料
+- `reference/agents/drift-detector.md` - Agent 做語義分析
+
 ---
 
 ## 模組職責
@@ -170,11 +197,11 @@ python cli/doctor.py
 | 模組 | 職責 | 依賴 |
 |------|------|------|
 | `servers/facade.py` | 統一入口，三層查詢，增強驗證 | 所有 servers |
-| `servers/drift.py` | SSOT-Code 偏差偵測 | ssot, code_graph, graph |
+| `servers/drift.py` | 提供 Drift 分析資料（`get_drift_context()`），基本存在性檢查 | ssot, code_graph, graph |
 | `servers/registry.py` | 類型註冊，驗證 | 無 |
 | `servers/code_graph.py` | Code Graph 操作，增量更新 | registry, extractor |
 | `servers/graph.py` | SSOT Graph 操作 | 無 |
-| `servers/ssot.py` | SSOT 文檔載入 | 無 |
+| `servers/ssot.py` | SKILL.md 解析（動態分段，無硬編碼分類） | 無 |
 | `servers/memory.py` | 記憶操作 | 無 |
 | `servers/tasks.py` | 任務管理 | 無 |
 | `tools/code_graph_extractor/` | AST 解析 | 無 |
@@ -222,39 +249,41 @@ register_node_kind('component', '元件', 'React/Vue 元件')
 ## 目錄結構
 
 ```
-~/.claude/skills/cortex-agents/
-├── ARCHITECTURE.md          # 本文檔
-├── agents/                  # Agent 定義
-│   ├── pfc.md              # 規劃者（三層查詢）
-│   ├── executor.md         # 執行者
-│   ├── critic.md           # 驗證者（Graph 增強）
-│   ├── researcher.md       # 研究者
-│   ├── memory.md           # 記憶管理
-│   └── drift-detector.md   # 偏差偵測
+~/.claude/cortex/                # Skill 根目錄
+├── SKILL.md                 # Skill 入口（按 Heading 組織連結）
+├── reference/               # 參考文檔
+│   ├── ARCHITECTURE.md      # 本文檔
+│   ├── API_REFERENCE.md     # API 參考
+│   ├── WORKFLOW_GUIDE.md    # 工作流指南
+│   ├── MEMORY_GUIDE.md      # 記憶管理指南
+│   ├── GRAPH_GUIDE.md       # Graph 使用指南
+│   ├── TROUBLESHOOTING.md   # 問題排解
+│   └── agents/              # Agent 定義
+│       ├── pfc.md           # 規劃者（三層查詢）
+│       ├── executor.md      # 執行者
+│       ├── critic.md        # 驗證者（Graph 增強）
+│       ├── researcher.md    # 研究者
+│       ├── memory.md        # 記憶管理
+│       └── drift-detector.md # 偏差偵測（語義分析）
 ├── brain/
-│   ├── brain.db            # SQLite 資料庫
-│   ├── schema.sql          # 資料庫 Schema
-│   └── ssot/               # SSOT 文檔
-│       ├── PROJECT_DOCTRINE.md
-│       ├── PROJECT_INDEX.md
-│       ├── flows/
-│       └── domains/
+│   ├── brain.db             # SQLite 資料庫
+│   └── schema.sql           # 資料庫 Schema
 ├── servers/                 # 服務層
-│   ├── facade.py           # 統一入口 ⭐（三層查詢、增強驗證）
-│   ├── drift.py            # SSOT-Code 偏差偵測
-│   ├── registry.py         # 類型註冊
-│   ├── code_graph.py       # Code Graph
-│   ├── graph.py            # SSOT Graph
-│   ├── ssot.py             # SSOT 載入
-│   ├── memory.py           # 記憶操作
-│   └── tasks.py            # 任務管理
+│   ├── facade.py            # 統一入口 ⭐（三層查詢、增強驗證）
+│   ├── drift.py             # Drift 資料提供（get_drift_context）
+│   ├── registry.py          # 類型註冊
+│   ├── code_graph.py        # Code Graph
+│   ├── graph.py             # SSOT Graph
+│   ├── ssot.py              # SKILL.md 解析
+│   ├── memory.py            # 記憶操作
+│   └── tasks.py             # 任務管理
 ├── tools/
 │   └── code_graph_extractor/  # AST 提取工具
 │       ├── __init__.py
 │       └── extractor.py
 ├── cli/                     # 命令列工具
 │   ├── __init__.py
-│   └── doctor.py           # 系統診斷
+│   └── doctor.py            # 系統診斷
 └── scripts/                 # 輔助腳本
 ```
 
@@ -302,11 +331,11 @@ register_node_kind('component', '元件', 'React/Vue 元件')
 #### 同步層（團隊共享，Git 版控）
 
 ```
-brain/ssot/
-├── PROJECT_DOCTRINE.md   # 共同價值觀與約束
-├── PROJECT_INDEX.md      # 系統導航目錄
-├── flows/                # Flow 規格定義
-└── domains/              # Domain 規格定義
+project-root/
+├── SKILL.md              # Skill 入口（或 .claude/skills/<name>/SKILL.md）
+└── reference/            # 參考文檔
+    ├── ARCHITECTURE.md
+    └── ...
 ```
 
 **為什麼這些同步？** 它們定義「專案應該怎樣」，是團隊共識的源頭。
@@ -365,17 +394,18 @@ Git Repository (共享)
 
 ```
 Git Repository (共享)
-└── brain/ssot/
-    ├── flows/auth/       # 按 Flow 拆分 SSOT
-    ├── flows/payment/
-    └── flows/user/
+└── SKILL.md              # 頂層 Skill 入口
+    └── reference/        # 按模組拆分文檔
+        ├── auth/
+        ├── payment/
+        └── user/
 
 可選：共享 Task Server
 └── 團隊任務看板（需額外建設）
 ```
 
 **關鍵實踐：**
-- SSOT 按 Flow 模組化，減少合併衝突
+- 文檔按模組拆分，減少合併衝突
 - 考慮設置共享 Task Server（超出本系統範圍）
 - 建立 SSOT 變更的自動 Critic 驗證
 
@@ -387,6 +417,8 @@ Git Repository (共享)
 | ADR-002 | Code Graph 本地建構 | 確定性、無需共享基礎設施 |
 | ADR-003 | SSOT 用 Git 同步 | 成熟方案、版本追溯、PR 審核 |
 | ADR-004 | SQLite 而非中央 DB | 零配置、離線可用、跨專案共享 |
+| ADR-005 | SKILL.md 動態分段 | 不硬編碼目錄分類，由 Heading 自然組織 |
+| ADR-006 | Agent vs Script 分離 | 腳本提供資料、Agent 做語義判斷 |
 
 ---
 
@@ -403,11 +435,40 @@ from servers.facade import (
     format_validation_report, # 格式化驗證報告
 
     # === Drift 偵測（Story 17）===
-    check_drift,             # 檢查 SSOT-Code 偏差
+    check_drift,             # 基本存在性檢查
+    get_drift_context,       # 取得 Drift 分析資料（供 Agent 語義分析）
 
     # === SSOT Graph 同步 ===
-    sync_ssot_graph          # 同步 SSOT Index 到 Graph
+    sync_skill_graph         # 同步 SKILL.md 連結到 Graph
 )
+```
+
+### Drift 分析架構
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     get_drift_context()                      │
+│                  (servers/drift.py)                          │
+├─────────────────────────────────────────────────────────────┤
+│  提供結構化資料：                                            │
+│  - skill_content: SKILL.md 完整內容                         │
+│  - skill_links: parse_skill_links() 結果（連結 + 分段）     │
+│  - code_nodes: Code Graph 所有節點                          │
+│  - code_files: 檔案節點列表                                  │
+│  - code_stats: 統計資訊                                      │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                     Drift Agent                              │
+│              (reference/agents/drift-detector.md)            │
+├─────────────────────────────────────────────────────────────┤
+│  語義分析：                                                  │
+│  - 判斷文檔描述 vs 實際程式碼的語義偏差                      │
+│  - 識別未文檔化的重要功能                                    │
+│  - 識別文檔描述但未實作的功能                                │
+│  - 產出可行動的偏差報告                                      │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -416,9 +477,10 @@ from servers.facade import (
 
 | 版本 | 日期 | 說明 |
 |------|------|------|
-| 2.1.0 | 2025-01 | Stories 15-17: 三層查詢、增強驗證、Drift 偵測 |
-| 2.0.0 | 2024-12 | Stories 1-14: 基礎架構、Code Graph、Agents |
-| 1.0.0 | 2024-11 | 初版：Attention Tree 概念驗證 |
+| 3.0.0 | 2026-01 | 轉型為 Skill 架構，SKILL.md 動態分段，Agent vs Script 分離 |
+| 2.1.0 | 2025-12 | Stories 15-17: 三層查詢、增強驗證、Drift 偵測 |
+| 2.0.0 | 2025-12 | Stories 1-14: 基礎架構、Code Graph、Agents |
+| 1.0.0 | 2025-11 | 初版：Attention Tree 概念驗證 |
 
 ### Stories 完成對照表
 
