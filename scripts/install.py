@@ -39,7 +39,7 @@ def check_dependencies():
         errors.append(f"sqlite3 模組無法使用: {e}")
 
     # 3. 目錄權限檢查
-    claude_dir = os.path.expanduser('~/.claude')
+    claude_dir = os.path.normpath(os.path.expanduser('~/.claude'))
     if os.path.exists(claude_dir):
         if not os.access(claude_dir, os.W_OK):
             errors.append(f"無寫入權限: {claude_dir}")
@@ -67,8 +67,10 @@ def check_dependencies():
     return True
 
 def install():
-    base_dir = os.path.expanduser('~/.claude/skills/han-agents')
-    agents_dir = os.path.expanduser('~/.claude/agents')
+    # 使用 os.path.join 確保跨平台路徑一致性
+    claude_home = os.path.normpath(os.path.expanduser('~/.claude'))
+    base_dir = os.path.join(claude_home, 'skills', 'han-agents')
+    agents_dir = os.path.join(claude_home, 'agents')
     brain_dir = os.path.join(base_dir, 'brain')
     db_path = os.path.join(brain_dir, 'brain.db')
     schema_path = os.path.join(brain_dir, 'schema.sql')
@@ -111,7 +113,7 @@ def install():
         init_database(db_path, schema_path)
 
     # 4. 設定 Claude Code Hook ⭐
-    settings_path = os.path.expanduser('~/.claude/settings.json')
+    settings_path = os.path.join(claude_home, 'settings.json')
     setup_hooks(settings_path, base_dir)
 
     # 5. 完成
@@ -398,7 +400,7 @@ def ask_sync_code_graph(auto_confirm=False):
     print("📊 同步 Code Graph...")
     try:
         # 動態載入 facade 模組
-        base_dir = os.path.expanduser('~/.claude/skills/han-agents')
+        base_dir = os.path.normpath(os.path.expanduser(os.path.join('~', '.claude', 'skills', 'han-agents')))
         sys.path.insert(0, base_dir)
         from servers.facade import sync
 
@@ -485,7 +487,7 @@ def init_database(db_path, schema_path):
 
 def reset_database():
     """強制重置資料庫（謹慎使用）"""
-    base_dir = os.path.expanduser('~/.claude/skills/han-agents')
+    base_dir = os.path.normpath(os.path.expanduser(os.path.join('~', '.claude', 'skills', 'han-agents')))
     brain_dir = os.path.join(base_dir, 'brain')
     db_path = os.path.join(brain_dir, 'brain.db')
     schema_path = os.path.join(brain_dir, 'schema.sql')
