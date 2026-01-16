@@ -188,19 +188,37 @@ from servers.memory import search_memory_semantic, store_memory
 
 ## Project Setup
 
-Initialize a project Skill:
+Initialize a project Skill (auto-detects platform from han-agents install location):
 
-**macOS/Linux:**
 ```bash
+# Run from your skills directory
+python <skills-path>/han-agents/scripts/init_project.py <project-name> [project-dir]
+
+# Examples:
+# Claude Code
 python ~/.claude/skills/han-agents/scripts/init_project.py my-project /path/to/project
+
+# Cursor
+python ~/.cursor/skills/han-agents/scripts/init_project.py my-project /path/to/project
+
+# Windsurf (project-level)
+python .windsurf/skills/han-agents/scripts/init_project.py my-project .
+
+# Override platform (optional)
+python ~/.claude/skills/han-agents/scripts/init_project.py my-project . --platform cursor
 ```
 
-**Windows (CMD/PowerShell):**
-```cmd
-python "%USERPROFILE%\.claude\skills\han-agents\scripts\init_project.py" my-project C:\path\to\project
-```
+This creates `<project>/.<platform>/skills/<project-name>/SKILL.md`:
 
-This creates `<project>/.claude/skills/<project-name>/SKILL.md` - a template for LLM to fill with project documentation.
+| Platform | Project Skill Location |
+|----------|------------------------|
+| Claude Code | `.claude/skills/<name>/SKILL.md` |
+| Cursor | `.cursor/skills/<name>/SKILL.md` |
+| Windsurf | `.windsurf/skills/<name>/SKILL.md` |
+| Cline | `.cline/skills/<name>/SKILL.md` |
+| Codex CLI | `.codex/skills/<name>/SKILL.md` |
+| Gemini CLI | `.gemini/skills/<name>/SKILL.md` |
+| Antigravity | `.agent/skills/<name>/SKILL.md` |
 
 ## Architecture
 

@@ -2,6 +2,15 @@
 """
 HAN System - 專案初始化腳本
 建立專案 Skill 結構和資料庫記錄
+
+支援平台：
+- Claude Code: .claude/skills/<name>/
+- Cursor: .cursor/skills/<name>/
+- Windsurf: .windsurf/skills/<name>/
+- Cline: .cline/skills/<name>/
+- Codex CLI: .codex/skills/<name>/
+- Gemini CLI: .gemini/skills/<name>/
+- Antigravity: .agent/skills/<name>/
 """
 
 import os
@@ -11,6 +20,49 @@ import sqlite3
 # Windows console encoding fix
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
+
+# 平台設定（workspace-level skills 目錄）
+PLATFORM_SKILL_DIRS = {
+    'claude': '.claude/skills',
+    'cursor': '.cursor/skills',
+    'windsurf': '.windsurf/skills',
+    'cline': '.cline/skills',
+    'codex': '.codex/skills',
+    'gemini': '.gemini/skills',
+    'antigravity': '.agent/skills',
+}
+
+
+def detect_platform_from_han_path():
+    """根據 han-agents 安裝位置偵測平台"""
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    normalized_path = os.path.normpath(base_dir).replace('\\', '/')
+
+    # 檢查各平台的 global skills 目錄
+    platform_global_dirs = {
+        'claude': '~/.claude/skills',
+        'cursor': '~/.cursor/skills',
+        'windsurf': '~/.codeium/windsurf/skills',
+        'cline': '~/.cline/skills',
+        'codex': '~/.codex/skills',
+        'gemini': '~/.gemini/skills',
+        'antigravity': '~/.gemini/antigravity/skills',
+    }
+
+    for platform_key, skills_dir in platform_global_dirs.items():
+        expanded = os.path.normpath(os.path.expanduser(skills_dir)).replace('\\', '/')
+        if normalized_path.startswith(expanded):
+            return platform_key
+
+    # 檢查 workspace-level patterns
+    for platform_key, rel_dir in PLATFORM_SKILL_DIRS.items():
+        if rel_dir.replace('/', os.sep) in normalized_path or rel_dir in normalized_path:
+            return platform_key
+
+    # 預設使用 claude
+    return 'claude'
+
 
 # 專案 SKILL.md 模板
 # 路徑說明：SKILL.md 位於 <project>/.claude/skills/<name>/
@@ -42,9 +94,16 @@ description: |
 '''
 
 
-def init_project_skill(project_dir, project_name):
-    """建立專案 Skill 目錄和空白模板"""
-    skill_dir = os.path.join(project_dir, ".claude", "skills", project_name)
+def init_project_skill(project_dir, project_name, platform='claude'):
+    """建立專案 Skill 目錄和空白模板
+
+    Args:
+        project_dir: 專案根目錄
+        project_name: 專案名稱
+        platform: 平台名稱 (claude, cursor, windsurf, cline, codex, gemini, antigravity)
+    """
+    skill_rel_dir = PLATFORM_SKILL_DIRS.get(platform, '.claude/skills')
+    skill_dir = os.path.join(project_dir, skill_rel_dir, project_name)
     os.makedirs(skill_dir, exist_ok=True)
 
     skill_md = os.path.join(skill_dir, "SKILL.md")
@@ -58,8 +117,14 @@ def init_project_skill(project_dir, project_name):
     return skill_dir
 
 
-def init_project(project_name, project_dir=None):
-    """初始化專案"""
+def init_project(project_name, project_dir=None, platform=None):
+    """初始化專案
+
+    Args:
+        project_name: 專案名稱
+        project_dir: 專案根目錄（預設為當前目錄）
+        platform: 平台名稱（預設自動偵測）
+    """
     # 使用相對路徑，相容所有平台
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     db_path = os.path.join(base_dir, 'brain', 'brain.db')
@@ -67,7 +132,22 @@ def init_project(project_name, project_dir=None):
     if project_dir is None:
         project_dir = os.getcwd()
 
+    if platform is None:
+        platform = detect_platform_from_han_path()
+
+    platform_names = {
+        'claude': 'Claude Code',
+        'cursor': 'Cursor',
+        'windsurf': 'Windsurf',
+        'cline': 'Cline',
+        'codex': 'Codex CLI',
+        'gemini': 'Gemini CLI',
+        'antigravity': 'Antigravity',
+    }
+    platform_display = platform_names.get(platform, platform)
+
     print(f"🚀 初始化專案: {project_name}")
+    print(f"📍 平台: {platform_display}")
     print("=" * 50)
 
     # 1. 確認資料庫存在
@@ -77,7 +157,7 @@ def init_project(project_name, project_dir=None):
         sys.exit(1)
 
     # 2. 建立專案 Skill
-    skill_dir = init_project_skill(project_dir, project_name)
+    skill_dir = init_project_skill(project_dir, project_name, platform)
 
     # 3. 建立專案記錄
     db = sqlite3.connect(db_path)
@@ -98,8 +178,8 @@ def init_project(project_name, project_dir=None):
     db.commit()
     db.close()
 
-    # 4. 建立本地設定檔
-    config_dir = os.path.join(project_dir, '.claude')
+    # 4. 建立本地設定檔（放在專案 skill 目錄）
+    config_dir = skill_dir
     os.makedirs(config_dir, exist_ok=True)
 
     config_content = f'''# HAN System Configuration
@@ -152,12 +232,12 @@ SKILL_DIR = "{skill_dir}"
 
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("使用方式: python init_project.py <project_name> [project_dir]")
-        print("範例: python init_project.py my-awesome-app")
-        print("範例: python init_project.py my-app /path/to/project")
-        sys.exit(1)
+    import argparse
+    parser = argparse.ArgumentParser(description='初始化 HAN-Agents 專案')
+    parser.add_argument('project_name', help='專案名稱')
+    parser.add_argument('project_dir', nargs='?', default=None, help='專案目錄（預設為當前目錄）')
+    parser.add_argument('--platform', '-p', choices=list(PLATFORM_SKILL_DIRS.keys()),
+                        help='目標平台（預設自動偵測）')
 
-    project_name = sys.argv[1]
-    project_dir = sys.argv[2] if len(sys.argv) > 2 else None
-    init_project(project_name, project_dir)
+    args = parser.parse_args()
+    init_project(args.project_name, args.project_dir, args.platform)
