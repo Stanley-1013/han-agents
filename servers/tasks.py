@@ -9,7 +9,9 @@ import os
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
-BRAIN_DB = os.path.expanduser("~/.claude/skills/han-agents/brain/brain.db")
+# 動態計算資料庫路徑（相對於此模組位置）
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BRAIN_DB = os.path.join(_BASE_DIR, 'brain', 'brain.db')
 
 SCHEMA = """
 === Tasks Server ===

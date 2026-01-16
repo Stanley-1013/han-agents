@@ -353,7 +353,7 @@ def status(project_path: str = None, project_name: str = None) -> Dict:
         except:
             pass
     else:
-        messages.append(f"Project Skill not found. Run: python ~/.claude/skills/han-agents/scripts/init_project.py {project_name}")
+        messages.append(f"Project Skill not found. Run: python <skills-path>/han-agents/scripts/init_project.py {project_name}")
 
     return {
         'project_name': project_name,
@@ -987,7 +987,7 @@ def sync_skill_graph(project_path: str = None, project_name: str = None) -> Dict
             'types_found': [],
             'total_nodes': 0,
             'total_edges': 0,
-            'message': f'No Skill found. Run: python ~/.claude/skills/han-agents/scripts/init_project.py {project_name}'
+            'message': f'No Skill found. Run: python <skills-path>/han-agents/scripts/init_project.py {project_name}'
         }
 
     # 解析 SKILL.md 連結

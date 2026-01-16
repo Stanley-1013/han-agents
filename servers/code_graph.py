@@ -80,7 +80,9 @@ get_code_graph_stats(project) -> Dict
 # Database Connection
 # =============================================================================
 
-DB_PATH = os.path.expanduser('~/.claude/skills/han-agents/brain/brain.db')
+# 動態計算資料庫路徑（相對於此模組位置）
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_PATH = os.path.join(_BASE_DIR, 'brain', 'brain.db')
 
 def get_db() -> sqlite3.Connection:
     """取得資料庫連線"""

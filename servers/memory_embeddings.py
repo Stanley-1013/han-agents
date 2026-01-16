@@ -10,10 +10,13 @@ pip install sentence-transformers numpy
 import os
 from typing import List, Dict, Optional
 
+# 動態計算路徑（相對於此模組位置）
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # 嵌入模型配置
 EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
 EMBEDDING_DIM = 384
-CACHE_DIR = os.path.expanduser("~/.claude/skills/han-agents/cache/embeddings")
+CACHE_DIR = os.path.join(_BASE_DIR, 'cache', 'embeddings')
 
 _model = None  # 延遲載入
 

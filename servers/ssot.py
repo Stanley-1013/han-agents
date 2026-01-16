@@ -3,7 +3,16 @@ SSOT Server - 專案 Skill 管理
 ==============================
 
 讀取專案的 SKILL.md 和相關文檔。
-新架構：專案 Skill 位於 <project>/.claude/skills/<project-name>/
+新架構：專案 Skill 位於 <project>/.<platform>/skills/<project-name>/
+
+支援平台：
+- Claude Code: .claude/skills/<name>/
+- Cursor: .cursor/skills/<name>/
+- Windsurf: .windsurf/skills/<name>/
+- Cline: .cline/skills/<name>/
+- Codex CLI: .codex/skills/<name>/
+- Gemini CLI: .gemini/skills/<name>/
+- Antigravity: .agent/skills/<name>/
 
 使用方式：
     from servers.ssot import load_skill, load_flow_spec, load_project_skill
@@ -23,6 +32,18 @@ import re
 import glob
 from typing import Dict, List, Optional, Any
 from pathlib import Path
+
+
+# 支援的平台 skills 目錄（優先順序）
+PLATFORM_SKILL_DIRS = [
+    '.claude/skills',
+    '.cursor/skills',
+    '.windsurf/skills',
+    '.cline/skills',
+    '.codex/skills',
+    '.gemini/skills',
+    '.agent/skills',  # Antigravity
+]
 
 SCHEMA = """
 === SSOT Server API ===
@@ -83,8 +104,10 @@ def find_skill_dir(project_dir: str) -> Optional[str]:
 
     搜尋順序：
     1. <project>/SKILL.md（根目錄，skill 套件自身的情況）
-    2. <project>/.claude/skills/<name>/SKILL.md（新格式）
+    2. <project>/.<platform>/skills/<name>/SKILL.md（多平台新格式）
     3. <project>/.claude/pfc/INDEX.md（舊格式，向下相容）
+
+    支援平台：claude, cursor, windsurf, cline, codex, gemini, antigravity
 
     Args:
         project_dir: 專案目錄
@@ -97,14 +120,15 @@ def find_skill_dir(project_dir: str) -> Optional[str]:
     if os.path.exists(root_skill):
         return project_dir
 
-    # 新格式：.claude/skills/<name>/
-    skills_base = os.path.join(project_dir, ".claude", "skills")
-    if os.path.exists(skills_base):
-        pattern = os.path.join(skills_base, "*", "SKILL.md")
-        matches = glob.glob(pattern)
-        if matches:
-            # 返回第一個找到的 Skill 目錄
-            return os.path.dirname(matches[0])
+    # 新格式：搜尋所有支援的平台
+    for platform_dir in PLATFORM_SKILL_DIRS:
+        skills_base = os.path.join(project_dir, platform_dir)
+        if os.path.exists(skills_base):
+            pattern = os.path.join(skills_base, "*", "SKILL.md")
+            matches = glob.glob(pattern)
+            if matches:
+                # 返回第一個找到的 Skill 目錄
+                return os.path.dirname(matches[0])
 
     # 舊格式：.claude/pfc/（向下相容）
     legacy_path = os.path.join(project_dir, ".claude", "pfc")

@@ -148,7 +148,9 @@ DEFAULT_EDGE_KINDS: List[Tuple[str, str, str, Optional[str], Optional[str], int]
 # Database Connection
 # =============================================================================
 
-DB_PATH = os.path.expanduser('~/.claude/skills/han-agents/brain/brain.db')
+# 動態計算資料庫路徑（相對於此模組位置）
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_PATH = os.path.join(_BASE_DIR, 'brain', 'brain.db')
 
 def get_db() -> sqlite3.Connection:
     """取得資料庫連線"""
@@ -414,7 +416,7 @@ def init_default_types() -> Tuple[int, int]:
 
 def ensure_schema_exists():
     """確保 Schema 存在（讀取 schema.sql 並執行）"""
-    schema_path = os.path.expanduser('~/.claude/skills/han-agents/brain/schema.sql')
+    schema_path = os.path.join(_BASE_DIR, 'brain', 'schema.sql')
 
     if not os.path.exists(schema_path):
         raise FileNotFoundError(f"Schema file not found: {schema_path}")
