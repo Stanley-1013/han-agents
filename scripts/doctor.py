@@ -106,7 +106,7 @@ def check_database() -> DiagnosticResult:
                 name="Database",
                 status=Status.WARNING,
                 message=f"Missing tables: {', '.join(missing)}",
-                fix_hint="Run: python ~/.claude/skills/han-agents/scripts/install.py"
+                fix_hint="Run: python <skills-path>/han-agents/scripts/install.py"
             )
 
         return DiagnosticResult(
@@ -188,7 +188,7 @@ def check_code_graph() -> DiagnosticResult:
                 name="Code Graph",
                 status=Status.WARNING,
                 message="Code Graph is empty",
-                fix_hint="Run: python ~/.claude/skills/han-agents/scripts/sync.py"
+                fix_hint="Run: python <skills-path>/han-agents/scripts/sync.py"
             )
 
         return DiagnosticResult(

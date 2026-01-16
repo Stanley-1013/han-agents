@@ -20,8 +20,9 @@ if sys.platform == 'win32':
 import argparse
 import json
 
-# 確保可以 import servers
-sys.path.insert(0, os.path.expanduser('~/.claude/skills/han-agents'))
+# 動態計算路徑，確保可以 import servers
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _BASE_DIR)
 
 
 def cmd_search(args):
@@ -78,7 +79,7 @@ def cmd_list(args):
     """列出記憶"""
     import sqlite3
 
-    db_path = os.path.expanduser('~/.claude/skills/han-agents/brain/brain.db')
+    db_path = os.path.join(_BASE_DIR, 'brain', 'brain.db')
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 

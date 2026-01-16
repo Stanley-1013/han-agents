@@ -18,8 +18,9 @@ import json
 from typing import Callable, List, Tuple, Dict, Any
 from dataclasses import dataclass
 
-# 設定路徑
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 動態計算路徑
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _BASE_DIR)
 
 # =============================================================================
 # Test Framework
@@ -92,7 +93,7 @@ def verify_story_1_2(v: StoryVerifier):
 
     # 1. Schema 存在
     def check_schema():
-        schema_path = os.path.expanduser('~/.claude/skills/han-agents/brain/schema.sql')
+        schema_path = os.path.join(_BASE_DIR, 'brain', 'schema.sql')
         if not os.path.exists(schema_path):
             return False, "schema.sql not found"
         with open(schema_path, encoding='utf-8') as f:
@@ -107,7 +108,7 @@ def verify_story_1_2(v: StoryVerifier):
 
     # 2. Database 存在且可連接
     def check_database():
-        db_path = os.path.expanduser('~/.claude/skills/han-agents/brain/brain.db')
+        db_path = os.path.join(_BASE_DIR, 'brain', 'brain.db')
         if not os.path.exists(db_path):
             return False, "brain.db not found"
         conn = sqlite3.connect(db_path)
@@ -226,7 +227,7 @@ def verify_story_7_9(v: StoryVerifier):
     # 8. Extractor 功能
     def check_extraction():
         from tools.code_graph_extractor import extract_from_file
-        result = extract_from_file(os.path.expanduser('~/.claude/skills/han-agents/servers/memory.py'))
+        result = extract_from_file(os.path.join(_BASE_DIR, 'servers', 'memory.py'))
         if result.errors:
             return False, f"Errors: {result.errors}"
         if not result.nodes:
@@ -254,7 +255,7 @@ def verify_story_10_12(v: StoryVerifier):
 
     for i, agent in enumerate(agents, 10):
         def check_agent(a=agent):
-            path = os.path.expanduser(f'~/.claude/skills/han-agents/agents/{a}.md')
+            path = os.path.join(_BASE_DIR, 'reference', 'agents', f'{a}.md')
             if not os.path.exists(path):
                 return False, f"{a}.md not found"
             with open(path, encoding='utf-8') as f:
@@ -280,11 +281,11 @@ def verify_story_13_14(v: StoryVerifier):
     # 13. CLI 存在（檢查多個可能位置）
     def check_cli():
         cli_paths = [
-            os.path.expanduser('~/.claude/skills/han-agents/cli/pfc.py'),
-            os.path.expanduser('~/.claude/skills/han-agents/cli/main.py'),
-            os.path.expanduser('~/.claude/skills/han-agents/scripts/pfc.sh'),
+            os.path.join(_BASE_DIR, 'cli', 'pfc.py'),
+            os.path.join(_BASE_DIR, 'cli', 'main.py'),
+            os.path.join(_BASE_DIR, 'scripts', 'pfc.sh'),
         ]
-        cli_dir = os.path.expanduser('~/.claude/skills/han-agents/cli/')
+        cli_dir = os.path.join(_BASE_DIR, 'cli')
         if os.path.isdir(cli_dir):
             files = os.listdir(cli_dir)
             if files:
@@ -398,7 +399,7 @@ def verify_story_17(v: StoryVerifier):
 
     # Agent prompt
     def check_drift_agent():
-        path = os.path.expanduser('~/.claude/skills/han-agents/agents/drift-detector.md')
+        path = os.path.join(_BASE_DIR, 'reference', 'agents', 'drift-detector.md')
         if not os.path.exists(path):
             return False, "drift-detector.md not found"
         with open(path, encoding='utf-8') as f:
@@ -444,7 +445,7 @@ def verify_additional(v: StoryVerifier):
 
     for agent in ['memory', 'researcher', 'drift-detector']:
         def check_agent(a=agent):
-            path = os.path.expanduser(f'~/.claude/skills/han-agents/agents/{a}.md')
+            path = os.path.join(_BASE_DIR, 'reference', 'agents', f'{a}.md')
             if not os.path.exists(path):
                 return False, f"{a}.md not found"
             with open(path, encoding='utf-8') as f:

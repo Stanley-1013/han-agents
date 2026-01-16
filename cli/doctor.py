@@ -15,8 +15,9 @@ from typing import List, Dict, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
-# 確保可以 import servers
-sys.path.insert(0, os.path.expanduser('~/.claude/skills/han-agents'))
+# 動態計算路徑，確保可以 import servers
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _BASE_DIR)
 
 
 class Status(Enum):
@@ -35,7 +36,7 @@ class DiagnosticResult:
 
 def check_database() -> DiagnosticResult:
     """檢查資料庫是否存在且可連接"""
-    db_path = os.path.expanduser('~/.claude/skills/han-agents/brain/brain.db')
+    db_path = os.path.join(_BASE_DIR, 'brain', 'brain.db')
 
     if not os.path.exists(db_path):
         return DiagnosticResult(
@@ -116,7 +117,7 @@ def check_registry() -> DiagnosticResult:
 
 def check_ssot_files() -> DiagnosticResult:
     """檢查 SSOT 檔案"""
-    ssot_dir = os.path.expanduser('~/.claude/skills/han-agents/brain/ssot')
+    ssot_dir = os.path.join(_BASE_DIR, 'brain', 'ssot')
     doctrine_path = os.path.join(ssot_dir, 'PROJECT_DOCTRINE.md')
     index_path = os.path.join(ssot_dir, 'PROJECT_INDEX.md')
 

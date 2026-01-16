@@ -14,10 +14,11 @@ import os
 import re
 from datetime import datetime
 
-# 加入 han 路徑
-sys.path.insert(0, os.path.expanduser('~/.claude/skills/han-agents'))
+# 動態計算路徑（相對於此模組位置）
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _BASE_DIR)
 
-LOG_PATH = os.path.expanduser("~/.claude/skills/han-agents/hooks/hook.log")
+LOG_PATH = os.path.join(_BASE_DIR, 'hooks', 'hook.log')
 
 
 def log(msg: str):

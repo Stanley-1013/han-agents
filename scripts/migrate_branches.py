@@ -24,8 +24,9 @@ if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 from datetime import datetime
 
-# 資料庫路徑
-BRAIN_DB = os.path.expanduser("~/.claude/skills/han-agents/brain/brain.db")
+# 動態計算路徑（相對於此腳本位置）
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BRAIN_DB = os.path.join(_BASE_DIR, 'brain', 'brain.db')
 
 def check_column_exists(cursor, table: str, column: str) -> bool:
     """檢查欄位是否存在"""

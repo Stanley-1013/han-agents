@@ -19,8 +19,9 @@ import sys
 import os
 import argparse
 
-# 確保可以 import servers
-sys.path.insert(0, os.path.expanduser('~/.claude/skills/han-agents'))
+# 動態計算路徑，確保可以 import servers
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _BASE_DIR)
 
 
 def cmd_doctor(args):
@@ -137,7 +138,7 @@ def cmd_install_hooks(args):
     """安裝 Git hooks"""
     import subprocess
 
-    script_path = os.path.expanduser('~/.claude/skills/han-agents/scripts/install-hooks.sh')
+    script_path = os.path.join(_BASE_DIR, 'scripts', 'install-hooks.sh')
 
     if not os.path.exists(script_path):
         print(f"Error: Install script not found: {script_path}")

@@ -15,10 +15,11 @@ import sys
 import shutil
 
 # 設定路徑
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _BASE_DIR)
 
-# Schema 路徑
-SCHEMA_PATH = os.path.expanduser('~/.claude/skills/han-agents/brain/schema.sql')
+# Schema 路徑（動態計算）
+SCHEMA_PATH = os.path.join(_BASE_DIR, 'brain', 'schema.sql')
 
 
 # =============================================================================

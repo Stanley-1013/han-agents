@@ -15,8 +15,9 @@ except:
 if input_data.get("tool_name") != "Task":
     sys.exit(0)
 
-# 寫入 debug log
-log_path = os.path.expanduser("~/.claude/skills/han-agents/hooks/task_debug.log")
+# 動態計算 log 路徑（相對於此腳本位置）
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+log_path = os.path.join(_BASE_DIR, 'hooks', 'task_debug.log')
 with open(log_path, "a", encoding="utf-8") as f:
     f.write(f"\n{'='*60}\n")
     f.write(f"Timestamp: {datetime.now().isoformat()}\n")
