@@ -102,6 +102,12 @@ DEFAULT_NODE_KINDS: List[Tuple[str, str, str, Optional[str], Optional[str], Opti
     ('model', '模型', '資料模型/schema', '💾', '#FF5722', 'model'),
     ('enum', '列舉', '列舉類型', '📋', '#CDDC39', 'ast'),
 
+    # Rust-specific types
+    ('struct', '結構', 'Rust 結構體', '🏗️', '#FF5722', 'ast'),
+    ('trait', '特徵', 'Rust trait', '🔗', '#9C27B0', 'ast'),
+    ('static', '靜態', 'Rust static 變數', '📍', '#607D8B', 'ast'),
+    ('macro', '巨集', 'Rust macro', '🔧', '#795548', 'ast'),
+
     # Test Layer
     ('test', '測試', '測試文件/suite', '🧪', '#4DD0E1', 'test'),
     ('test_case', '測試案例', '單一測試案例', '✅', '#81C784', 'test'),

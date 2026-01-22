@@ -93,6 +93,7 @@ SUPPORTED_EXTENSIONS = {
     '.py': 'python',
     '.go': 'go',
     '.java': 'java',
+    '.rs': 'rust',
 }
 
 # 忽略的目錄
@@ -249,6 +250,54 @@ class RegexExtractor:
         ),
         'constant': re.compile(
             r'^\s*(?:public\s+|private\s+|protected\s+)?static\s+final\s+([\w.<>\[\]]+)\s+([A-Z][A-Z0-9_]*)\s*=',
+            re.MULTILINE
+        ),
+    }
+
+    # Rust patterns
+    RUST_PATTERNS = {
+        'mod': re.compile(
+            r'^\s*(?:pub(?:\s*\([^)]+\))?\s+)?mod\s+(\w+)\s*(?:\{|;)',
+            re.MULTILINE
+        ),
+        'use': re.compile(
+            r'^\s*(?:pub(?:\s*\([^)]+\))?\s+)?use\s+([^;]+);',
+            re.MULTILINE
+        ),
+        'struct': re.compile(
+            r'^\s*(?:#\[[^\]]+\]\s*)*(?:pub(?:\s*\([^)]+\))?\s+)?struct\s+(\w+)(?:<[^>]+>)?(?:\s*\([^)]*\)\s*;|\s*(?:where\s+[^{]+)?\{)',
+            re.MULTILINE
+        ),
+        'enum': re.compile(
+            r'^\s*(?:#\[[^\]]+\]\s*)*(?:pub(?:\s*\([^)]+\))?\s+)?enum\s+(\w+)(?:<[^>]+>)?(?:\s+where\s+[^{]+)?\s*\{',
+            re.MULTILINE
+        ),
+        'trait': re.compile(
+            r'^\s*(?:#\[[^\]]+\]\s*)*(?:pub(?:\s*\([^)]+\))?\s+)?(?:unsafe\s+)?trait\s+(\w+)(?:<[^>]+>)?(?:\s*:\s*[^{]+)?(?:\s+where\s+[^{]+)?\s*\{',
+            re.MULTILINE
+        ),
+        'impl': re.compile(
+            r'^\s*(?:unsafe\s+)?impl(?:<[^>]+>)?\s+(?:([\w:]+)(?:<[^>]+>)?\s+for\s+)?(\w+)(?:<[^>]+>)?(?:\s+where\s+[^{]+)?\s*\{',
+            re.MULTILINE
+        ),
+        'fn': re.compile(
+            r'^\s*(?:#\[[^\]]+\]\s*)*(?:pub(?:\s*\([^)]+\))?\s+)?(?:const\s+)?(?:async\s+)?(?:unsafe\s+)?(?:extern\s+"[^"]*"\s+)?fn\s+(\w+)(?:<[^>]+>)?\s*\(([^)]*)\)(?:\s*->\s*([^\{;]+))?(?:\s+where\s+[^{]+)?(?:\s*\{|\s*;)',
+            re.MULTILINE
+        ),
+        'const': re.compile(
+            r'^\s*(?:pub(?:\s*\([^)]+\))?\s+)?const\s+([A-Z][A-Z0-9_]*)\s*:\s*([^=]+)\s*=',
+            re.MULTILINE
+        ),
+        'static': re.compile(
+            r'^\s*(?:pub(?:\s*\([^)]+\))?\s+)?static\s+(?:mut\s+)?([A-Z][A-Z0-9_]*)\s*:\s*([^=]+)\s*=',
+            re.MULTILINE
+        ),
+        'type_alias': re.compile(
+            r'^\s*(?:pub(?:\s*\([^)]+\))?\s+)?type\s+(\w+)(?:<[^>]+>)?\s*=',
+            re.MULTILINE
+        ),
+        'macro': re.compile(
+            r'^\s*(?:#\[[^\]]+\]\s*)*(?:pub(?:\s*\([^)]+\))?\s+)?macro_rules!\s+(\w+)\s*\{',
             re.MULTILINE
         ),
     }
@@ -1006,6 +1055,545 @@ class RegexExtractor:
 
         return result
 
+    @staticmethod
+    def _remove_rust_comments(content: str) -> str:
+        """
+        移除 Rust 註解以避免 regex 誤判
+
+        處理：
+        - 單行註解: // ...
+        - 文檔註解: /// ... 和 //! ...
+        - 多行註解: /* ... */ (支援巢狀)
+        """
+        # 移除多行註解 (Rust 支援巢狀註解，但簡化處理)
+        # 首先處理非巢狀情況
+        content = re.sub(r'/\*[\s\S]*?\*/', '', content)
+        # 移除單行/文檔註解
+        content = re.sub(r'//[^\n]*', '', content)
+        return content
+
+    @staticmethod
+    def _find_rust_block_end(lines: List[str], start_line: int) -> int:
+        """
+        找到 Rust block 結束行（括號配對，考慮字串/字元字面值和 raw strings）
+
+        處理：
+        - 巢狀括號
+        - 字串字面值 "..." 和 raw strings r#"..."#
+        - 字元字面值 '.'
+        - 生命週期 'a（不是字元）
+        """
+        brace_count = 0
+        started = False
+        in_string = False
+        in_raw_string = False
+        raw_string_hashes = 0
+        in_char = False
+        escape_next = False
+
+        for i, line in enumerate(lines[start_line:], start=start_line):
+            j = 0
+            while j < len(line):
+                char = line[j]
+
+                if escape_next:
+                    escape_next = False
+                    j += 1
+                    continue
+
+                # 處理 raw string r#"..."#
+                if not in_string and not in_char and not in_raw_string:
+                    if char == 'r' and j + 1 < len(line):
+                        # 計算 # 數量
+                        hash_count = 0
+                        k = j + 1
+                        while k < len(line) and line[k] == '#':
+                            hash_count += 1
+                            k += 1
+                        if k < len(line) and line[k] == '"':
+                            in_raw_string = True
+                            raw_string_hashes = hash_count
+                            j = k + 1
+                            continue
+
+                if in_raw_string:
+                    # 尋找結束: "###
+                    if char == '"':
+                        # 檢查後面是否有足夠的 #
+                        hash_count = 0
+                        k = j + 1
+                        while k < len(line) and line[k] == '#' and hash_count < raw_string_hashes:
+                            hash_count += 1
+                            k += 1
+                        if hash_count == raw_string_hashes:
+                            in_raw_string = False
+                            j = k
+                            continue
+                    j += 1
+                    continue
+
+                if char == '\\':
+                    escape_next = True
+                    j += 1
+                    continue
+
+                if char == '"' and not in_char:
+                    in_string = not in_string
+                    j += 1
+                    continue
+
+                # 處理字元字面值和生命週期
+                if char == "'" and not in_string:
+                    # 檢查是否是生命週期 'a 或字元 'x'
+                    if j + 2 < len(line) and line[j + 2] == "'":
+                        # 這是字元字面值 'x'
+                        j += 3
+                        continue
+                    elif j + 3 < len(line) and line[j + 1] == '\\' and line[j + 3] == "'":
+                        # 這是轉義字元 '\n'
+                        j += 4
+                        continue
+                    else:
+                        # 這是生命週期 'a，跳過
+                        j += 1
+                        continue
+
+                if in_string:
+                    j += 1
+                    continue
+
+                if char == '{':
+                    brace_count += 1
+                    started = True
+                elif char == '}':
+                    brace_count -= 1
+                    if started and brace_count == 0:
+                        return i + 1  # 1-indexed
+
+                j += 1
+
+        return len(lines)
+
+    @staticmethod
+    def _parse_rust_visibility(match_text: str) -> str:
+        """解析 Rust visibility"""
+        if 'pub(crate)' in match_text:
+            return 'pub(crate)'
+        elif 'pub(super)' in match_text:
+            return 'pub(super)'
+        elif 'pub(in' in match_text:
+            return 'pub(in)'
+        elif 'pub' in match_text:
+            return 'public'
+        return 'private'
+
+    @classmethod
+    def extract_rust(cls, content: str, file_path: str) -> ExtractionResult:
+        """提取 Rust 程式碼結構"""
+        result = ExtractionResult(
+            file_path=file_path,
+            language='rust',
+            file_hash=hashlib.md5(content.encode()).hexdigest()
+        )
+
+        # 前處理：移除註解
+        cleaned_content = cls._remove_rust_comments(content)
+        lines = cleaned_content.split('\n')
+
+        # File node
+        file_node = CodeNode(
+            id=make_node_id('file', file_path),
+            kind='file',
+            name=os.path.basename(file_path),
+            file_path=file_path,
+            language='rust',
+            hash=result.file_hash
+        )
+        result.nodes.append(file_node)
+
+        # 追蹤模組用於 qualified ID（從檔案路徑推斷）
+        # 例如: src/auth/login.rs -> auth::login
+        module_path = ''
+        path_parts = Path(file_path).parts
+        if 'src' in path_parts:
+            src_idx = path_parts.index('src')
+            mod_parts = list(path_parts[src_idx + 1:])
+            if mod_parts:
+                # 移除 .rs 副檔名
+                mod_parts[-1] = mod_parts[-1].replace('.rs', '')
+                # lib.rs 和 mod.rs 代表父模組
+                if mod_parts[-1] in ('lib', 'mod', 'main'):
+                    mod_parts = mod_parts[:-1]
+                module_path = '::'.join(mod_parts)
+
+        # 提取 use statements
+        for match in cls.RUST_PATTERNS['use'].finditer(cleaned_content):
+            use_path = match.group(1).strip()
+            line_num = cleaned_content[:match.start()].count('\n') + 1
+
+            # 處理各種 use 形式
+            # use std::collections::HashMap;
+            # use std::collections::{HashMap, HashSet};
+            # use std::io::*;
+            # use crate::module::Type;
+
+            # 簡化處理：提取主要路徑
+            base_path = use_path.split('::')[0].strip()
+            if '{' in use_path:
+                # 多重導入，取基礎路徑
+                base_path = use_path.split('{')[0].rstrip(':').strip()
+                target_id = f"module.{base_path}"
+            elif use_path.endswith('::*'):
+                target_id = f"module.{use_path[:-3]}"
+            else:
+                target_id = f"module.{use_path}"
+
+            result.edges.append(CodeEdge(
+                from_id=file_node.id,
+                to_id=target_id,
+                kind='imports',
+                line_number=line_num
+            ))
+
+        # 提取 mod declarations
+        for match in cls.RUST_PATTERNS['mod'].finditer(cleaned_content):
+            name = match.group(1)
+            line_num = cleaned_content[:match.start()].count('\n') + 1
+            match_text = match.group(0)
+
+            visibility = cls._parse_rust_visibility(match_text)
+
+            # 判斷是 mod 宣告還是 mod 定義
+            is_inline = match_text.strip().endswith('{')
+            if is_inline:
+                line_end = cls._find_rust_block_end(lines, line_num - 1)
+            else:
+                line_end = line_num
+
+            qualified_name = f"{module_path}::{name}" if module_path else name
+            mod_id = make_node_id('module', file_path, qualified_name)
+
+            mod_node = CodeNode(
+                id=mod_id,
+                kind='module',
+                name=name,
+                file_path=file_path,
+                line_start=line_num,
+                line_end=line_end,
+                visibility=visibility,
+                language='rust'
+            )
+            result.nodes.append(mod_node)
+            result.edges.append(CodeEdge(
+                from_id=file_node.id,
+                to_id=mod_id,
+                kind='defines'
+            ))
+
+        # 追蹤類型用於 impl 匹配
+        type_info = {}  # name -> (id, line_start, line_end)
+
+        # 提取 structs
+        for match in cls.RUST_PATTERNS['struct'].finditer(cleaned_content):
+            name = match.group(1)
+            line_num = cleaned_content[:match.start()].count('\n') + 1
+            match_text = match.group(0)
+
+            visibility = cls._parse_rust_visibility(match_text)
+
+            # 判斷是 tuple struct (;結尾) 還是 regular struct ({結尾)
+            if match_text.strip().endswith(';'):
+                line_end = line_num
+            else:
+                line_end = cls._find_rust_block_end(lines, line_num - 1)
+
+            qualified_name = f"{module_path}::{name}" if module_path else name
+            struct_id = make_node_id('struct', file_path, qualified_name)
+
+            struct_node = CodeNode(
+                id=struct_id,
+                kind='struct',
+                name=name,
+                file_path=file_path,
+                line_start=line_num,
+                line_end=line_end,
+                visibility=visibility,
+                language='rust'
+            )
+            result.nodes.append(struct_node)
+            result.edges.append(CodeEdge(
+                from_id=file_node.id,
+                to_id=struct_id,
+                kind='defines'
+            ))
+
+            type_info[name] = (struct_id, line_num, line_end)
+
+        # 提取 enums
+        for match in cls.RUST_PATTERNS['enum'].finditer(cleaned_content):
+            name = match.group(1)
+            line_num = cleaned_content[:match.start()].count('\n') + 1
+            match_text = match.group(0)
+
+            visibility = cls._parse_rust_visibility(match_text)
+            line_end = cls._find_rust_block_end(lines, line_num - 1)
+
+            qualified_name = f"{module_path}::{name}" if module_path else name
+            enum_id = make_node_id('enum', file_path, qualified_name)
+
+            enum_node = CodeNode(
+                id=enum_id,
+                kind='enum',
+                name=name,
+                file_path=file_path,
+                line_start=line_num,
+                line_end=line_end,
+                visibility=visibility,
+                language='rust'
+            )
+            result.nodes.append(enum_node)
+            result.edges.append(CodeEdge(
+                from_id=file_node.id,
+                to_id=enum_id,
+                kind='defines'
+            ))
+
+            type_info[name] = (enum_id, line_num, line_end)
+
+        # 提取 traits
+        for match in cls.RUST_PATTERNS['trait'].finditer(cleaned_content):
+            name = match.group(1)
+            line_num = cleaned_content[:match.start()].count('\n') + 1
+            match_text = match.group(0)
+
+            visibility = cls._parse_rust_visibility(match_text)
+            line_end = cls._find_rust_block_end(lines, line_num - 1)
+
+            qualified_name = f"{module_path}::{name}" if module_path else name
+            trait_id = make_node_id('trait', file_path, qualified_name)
+
+            trait_node = CodeNode(
+                id=trait_id,
+                kind='trait',
+                name=name,
+                file_path=file_path,
+                line_start=line_num,
+                line_end=line_end,
+                visibility=visibility,
+                language='rust'
+            )
+            result.nodes.append(trait_node)
+            result.edges.append(CodeEdge(
+                from_id=file_node.id,
+                to_id=trait_id,
+                kind='defines'
+            ))
+
+            type_info[name] = (trait_id, line_num, line_end)
+
+        # 提取 impl blocks
+        impl_ranges = []  # [(impl_for_type, line_start, line_end)]
+        for match in cls.RUST_PATTERNS['impl'].finditer(cleaned_content):
+            trait_name = match.group(1)  # 可能是 None
+            type_name = match.group(2)
+            line_num = cleaned_content[:match.start()].count('\n') + 1
+            line_end = cls._find_rust_block_end(lines, line_num - 1)
+
+            impl_ranges.append((type_name, trait_name, line_num, line_end))
+
+            # 如果是 impl Trait for Type，建立 implements edge
+            if trait_name and type_name in type_info:
+                type_id = type_info[type_name][0]
+                result.edges.append(CodeEdge(
+                    from_id=type_id,
+                    to_id=f"trait.{trait_name}",
+                    kind='implements',
+                    line_number=line_num,
+                    confidence=0.8
+                ))
+
+        # 提取 functions
+        for match in cls.RUST_PATTERNS['fn'].finditer(cleaned_content):
+            name = match.group(1)
+            params = match.group(2)
+            return_type = match.group(3)
+            line_num = cleaned_content[:match.start()].count('\n') + 1
+            match_text = match.group(0)
+
+            visibility = cls._parse_rust_visibility(match_text)
+
+            # 判斷是函式定義還是宣告
+            if match_text.strip().endswith(';'):
+                line_end = line_num
+            else:
+                line_end = cls._find_rust_block_end(lines, line_num - 1)
+
+            func_id = make_node_id('function', file_path, name)
+
+            # 建立簽名
+            signature = f"fn {name}({params.strip()})"
+            if return_type:
+                signature += f" -> {return_type.strip()}"
+
+            func_node = CodeNode(
+                id=func_id,
+                kind='function',
+                name=name,
+                file_path=file_path,
+                line_start=line_num,
+                line_end=line_end,
+                signature=signature,
+                visibility=visibility,
+                language='rust'
+            )
+            result.nodes.append(func_node)
+
+            # 找到包含此函式的 impl block 或 trait
+            containing_type = None
+
+            # 首先檢查 impl blocks
+            for impl_type, impl_trait, impl_start, impl_end in impl_ranges:
+                if impl_start < line_num < impl_end:
+                    if impl_type in type_info:
+                        containing_type = type_info[impl_type][0]
+                    break
+
+            # 如果不在 impl block 中，檢查是否在 trait 定義中
+            if not containing_type:
+                for type_name, (type_id, type_start, type_end) in type_info.items():
+                    if type_start < line_num < type_end and 'trait.' in type_id:
+                        containing_type = type_id
+                        break
+
+            if containing_type:
+                result.edges.append(CodeEdge(
+                    from_id=containing_type,
+                    to_id=func_id,
+                    kind='contains',
+                    line_number=line_num
+                ))
+            else:
+                result.edges.append(CodeEdge(
+                    from_id=file_node.id,
+                    to_id=func_id,
+                    kind='defines'
+                ))
+
+        # 提取 constants
+        for match in cls.RUST_PATTERNS['const'].finditer(cleaned_content):
+            name = match.group(1)
+            const_type = match.group(2).strip()
+            line_num = cleaned_content[:match.start()].count('\n') + 1
+            match_text = match.group(0)
+
+            visibility = cls._parse_rust_visibility(match_text)
+
+            const_id = make_node_id('constant', file_path, name)
+
+            const_node = CodeNode(
+                id=const_id,
+                kind='constant',
+                name=name,
+                file_path=file_path,
+                line_start=line_num,
+                line_end=line_num,
+                signature=f"const {name}: {const_type}",
+                visibility=visibility,
+                language='rust'
+            )
+            result.nodes.append(const_node)
+            result.edges.append(CodeEdge(
+                from_id=file_node.id,
+                to_id=const_id,
+                kind='defines'
+            ))
+
+        # 提取 static variables
+        for match in cls.RUST_PATTERNS['static'].finditer(cleaned_content):
+            name = match.group(1)
+            static_type = match.group(2).strip()
+            line_num = cleaned_content[:match.start()].count('\n') + 1
+            match_text = match.group(0)
+
+            visibility = cls._parse_rust_visibility(match_text)
+
+            static_id = make_node_id('static', file_path, name)
+
+            static_node = CodeNode(
+                id=static_id,
+                kind='static',
+                name=name,
+                file_path=file_path,
+                line_start=line_num,
+                line_end=line_num,
+                signature=f"static {name}: {static_type}",
+                visibility=visibility,
+                language='rust'
+            )
+            result.nodes.append(static_node)
+            result.edges.append(CodeEdge(
+                from_id=file_node.id,
+                to_id=static_id,
+                kind='defines'
+            ))
+
+        # 提取 type aliases
+        for match in cls.RUST_PATTERNS['type_alias'].finditer(cleaned_content):
+            name = match.group(1)
+            line_num = cleaned_content[:match.start()].count('\n') + 1
+            match_text = match.group(0)
+
+            visibility = cls._parse_rust_visibility(match_text)
+
+            type_id = make_node_id('type', file_path, name)
+
+            type_node = CodeNode(
+                id=type_id,
+                kind='type',
+                name=name,
+                file_path=file_path,
+                line_start=line_num,
+                line_end=line_num,
+                visibility=visibility,
+                language='rust'
+            )
+            result.nodes.append(type_node)
+            result.edges.append(CodeEdge(
+                from_id=file_node.id,
+                to_id=type_id,
+                kind='defines'
+            ))
+
+        # 提取 macros
+        for match in cls.RUST_PATTERNS['macro'].finditer(cleaned_content):
+            name = match.group(1)
+            line_num = cleaned_content[:match.start()].count('\n') + 1
+            match_text = match.group(0)
+
+            visibility = cls._parse_rust_visibility(match_text)
+            line_end = cls._find_rust_block_end(lines, line_num - 1)
+
+            macro_id = make_node_id('macro', file_path, name)
+
+            macro_node = CodeNode(
+                id=macro_id,
+                kind='macro',
+                name=name,
+                file_path=file_path,
+                line_start=line_num,
+                line_end=line_end,
+                visibility=visibility,
+                language='rust'
+            )
+            result.nodes.append(macro_node)
+            result.edges.append(CodeEdge(
+                from_id=file_node.id,
+                to_id=macro_id,
+                kind='defines'
+            ))
+
+        return result
+
 
 # =============================================================================
 # Main API
@@ -1051,6 +1639,8 @@ def extract_from_file(file_path: str) -> ExtractionResult:
         return RegexExtractor.extract_python(content, file_path)
     elif language == 'java':
         return RegexExtractor.extract_java(content, file_path)
+    elif language == 'rust':
+        return RegexExtractor.extract_rust(content, file_path)
     else:
         return ExtractionResult(
             file_path=file_path,
