@@ -20,8 +20,9 @@ import sys, os
 sys.path.insert(0, os.path.expanduser('~/.claude/skills/han-agents'))
 
 from servers.facade import get_full_context, check_drift, sync, finish_task
-from servers.tasks import create_task, create_subtask, get_task_progress
+from servers.tasks import create_task, create_subtask, get_task_progress, get_epic_tasks, get_hierarchy_summary
 from servers.memory import search_memory_semantic, store_memory, save_checkpoint, load_checkpoint
+from servers.code_graph import get_class_dependencies_bfs
 ```
 
 **DB**: `~/.claude/skills/han-agents/brain/brain.db`
@@ -92,6 +93,19 @@ checkpoint = load_checkpoint(task_id)
 
 # Store memory
 store_memory(category='pattern', title='Title', content='...', project='P', importance=8)
+
+# BFS dependency graph (for Unit Test context)
+deps = get_class_dependencies_bfs('my-project', 'UserService', max_depth=2)
+# Returns: root, root_file, dependencies (with depth, via edge type)
+
+# Hierarchical tasks (Jira-like: Epic → Story → Task → Bug)
+epic_id = create_task(project='P', description='Epic task', task_level='epic')
+story_id = create_task(project='P', description='Story', task_level='story', epic_id=epic_id)
+task_id = create_task(project='P', description='Task', task_level='task', story_id=story_id)
+
+# Query hierarchy
+epics = get_epic_tasks('P')  # Returns epics with nested stories
+summary = get_hierarchy_summary('P')  # {epics: N, stories: N, tasks: N, bugs: N}
 ```
 
 ## Agent Dispatch (Claude Code Task Tool)

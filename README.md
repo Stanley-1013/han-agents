@@ -170,7 +170,10 @@ python ~/.claude/skills/han-agents/scripts/doctor.py
 ## Features
 
 - **Task Lifecycle Management**: Create, execute, validate, and document tasks with multiple agents
-- **Code Graph**: AST-based code analysis for TypeScript, Python, and Go
+- **Hierarchical Tasks**: Jira-like task structure (Epic → Story → Task → Bug) for complex projects
+- **Code Graph**: AST-based code analysis for TypeScript, Python, Go, Java, and Rust
+  - Java: Extracts `@Autowired`, `@Inject`, `@MockBean` as `injects` edges (implicit dependencies)
+  - BFS dependency traversal for precise Unit Test context collection
 - **Drift Detection**: Compare Skill definitions against actual code implementation
 - **Semantic Memory**: FTS5 + embedding-based search with LLM reranking
 - **Micro-Nap Checkpoints**: Save/resume long-running tasks across conversations
@@ -264,9 +267,22 @@ from servers.facade import (
 
 ```python
 from servers.tasks import (
-    create_task,       # Create parent task
-    create_subtask,    # Create child task with dependencies
-    get_task_progress, # Get completion stats
+    create_task,           # Create task (supports task_level: epic/story/task/bug)
+    create_subtask,        # Create child task with dependencies
+    get_task_progress,     # Get completion stats
+    get_epic_tasks,        # Get epics with nested stories
+    get_story_tasks,       # Get tasks under a story
+    get_hierarchy_summary, # Count by level {epics, stories, tasks, bugs}
+)
+```
+
+### Code Graph
+
+```python
+from servers.code_graph import (
+    sync_from_directory,        # Sync folder to Code Graph
+    get_class_dependencies_bfs, # BFS traversal for dependency context
+    get_file_structure,         # Get file's code structure
 )
 ```
 
