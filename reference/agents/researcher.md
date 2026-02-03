@@ -93,6 +93,23 @@ store_memory(
 - {question_2}
 ```
 
+## 專案環境研究
+
+當研究大型或陌生專案時，應收集：
+
+### 構建環境
+- `pom.xml` → Maven / `build.gradle` → Gradle / `package.json` → npm
+- 識別測試框架（JUnit, Mockito, Jest, Vitest）
+
+### 專案慣例
+- 搜尋已存在的測試檔案，分析 Mock 風格、命名規則、Setup 模式
+- 識別專案特有的 coding conventions
+
+### 輸出
+研究結果應存入 Memory 或 Working Memory，供後續 PFC 規劃和 Executor 執行使用。
+
+---
+
 ## 研究技巧
 
 ### 找入口點

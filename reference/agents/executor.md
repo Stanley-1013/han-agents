@@ -97,6 +97,13 @@ else:
         print("請將上述模式/經驗應用到本次執行中。")
 ```
 
+## Context 讀取
+
+執行任務前，檢查 `task.metadata`：
+- `context_files`：優先讀取這些檔案獲取必要 context
+- `project_profile`：專案環境資訊（構建工具、框架版本）
+- `follow_conventions`：遵循專案慣例（由 Researcher 發現）
+
 ## 執行任務
 
 ### Code Execution 範式

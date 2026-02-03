@@ -21,6 +21,8 @@ model: opus
 3. **狀態管理** - 追蹤進度，觸發 Micro-Nap
 4. **結果整合** - 彙整結果，生成報告
 
+> **複雜任務原則**：大型或陌生專案，規劃時應包含 Researcher 子任務收集 context，再進行後續規劃。詳見 `reference/WORKFLOW_GUIDE.md`。
+
 ## 執行模式
 
 PFC 負責規劃任務、決定由誰執行，完成後回報執行計畫。

@@ -165,6 +165,54 @@ if report['has_drift']:
         print(f"  - [{d['severity']}] {d['description']}")
 ```
 
+## 複雜任務原則
+
+適用於：大型 codebase、多檔案變更、陌生專案
+
+### 1. Research First（研究先行）
+
+> 大型專案先派發 **Researcher** 收集 context，再規劃任務。
+
+需要了解：
+- 構建工具和版本（Maven/Gradle/npm）
+- 測試框架（JUnit, Mockito, Jest）
+- 專案慣例（命名規則、目錄結構）
+- 目標範圍內的檔案清單
+
+### 2. Context Precision（精準 context）
+
+> 只讀必要檔案，避免 context 污染。
+
+**錯誤**：「讀取整個 src/ 資料夾」
+**正確**：「讀取被測類 + 依賴介面 + 相似範例」
+
+### 3. Compile-First（編譯優先）
+
+> 先確保編譯通過，再追求功能正確。
+
+寫完代碼後立即執行編譯驗證，不要等到最後才發現依賴錯誤。
+
+### 4. Incremental Fix（增量修復）
+
+> 錯誤逐個修，不要一次改太多。
+
+一次修一個編譯錯誤，確認修復後再處理下一個。
+
+### 5. Memory Learning（記憶學習）
+
+> 踩過的坑存入 Memory，下次避免。
+
+```python
+store_memory(
+    category='error',
+    title='Mock Strategy Error',
+    content='使用 @Mock 而非 @MockBean 導致 Spring context 注入失敗',
+    importance=8
+)
+```
+
+---
+
 ## Best Practices
 
 1. Parallel dispatch for independent tasks

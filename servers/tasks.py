@@ -16,7 +16,7 @@ BRAIN_DB = os.path.join(_BASE_DIR, 'brain', 'brain.db')
 SCHEMA = """
 === Tasks Server ===
 
-create_task(project, description, priority=5, parent_id=None, branch=None) -> str
+create_task(project, description, priority=5, parent_id=None, branch=None, task_level=None, epic_id=None, story_id=None) -> str
     建立新任務，回傳 task_id
 
     Parameters:
@@ -29,6 +29,9 @@ create_task(project, description, priority=5, parent_id=None, branch=None) -> st
                 'flow_id': 'flow.auth',
                 'domain_ids': ['domain.user']
             }
+        task_level: 任務層級（可選）'epic' | 'story' | 'task' | 'bug'
+        epic_id: 所屬 Epic ID（可選）
+        story_id: 所屬 Story ID（可選）
 
 create_subtask(parent_id, description, assigned_agent='executor', depends_on=None, requires_validation=True) -> str
     建立子任務（可指定是否需要驗證）
@@ -94,7 +97,9 @@ def get_db():
     return sqlite3.connect(BRAIN_DB)
 
 def create_task(project: str, description: str, priority: int = 5,
-                parent_id: str = None, branch: Dict = None) -> str:
+                parent_id: str = None, branch: Dict = None,
+                task_level: str = None, epic_id: str = None,
+                story_id: str = None) -> str:
     """建立新任務
 
     Args:
@@ -107,10 +112,18 @@ def create_task(project: str, description: str, priority: int = 5,
                 'flow_id': 'flow.auth',
                 'domain_ids': ['domain.user']
             }
+        task_level: 任務層級（可選）'epic' | 'story' | 'task' | 'bug'
+        epic_id: 所屬 Epic ID（可選）
+        story_id: 所屬 Story ID（可選）
 
     Returns:
         task_id
     """
+    # 驗證 task_level
+    valid_levels = ['epic', 'story', 'task', 'bug', None]
+    if task_level not in valid_levels:
+        raise ValueError(f"Invalid task_level: {task_level}. Must be one of {valid_levels[:-1]}")
+
     db = get_db()
     cursor = db.cursor()
 
@@ -122,9 +135,11 @@ def create_task(project: str, description: str, priority: int = 5,
         metadata = json.dumps({'branch': branch})
 
     cursor.execute('''
-        INSERT INTO tasks (id, parent_id, project, description, priority, metadata)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (task_id, parent_id, project, description, priority, metadata))
+        INSERT INTO tasks (id, parent_id, project, description, priority, metadata,
+                          task_level, epic_id, story_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (task_id, parent_id, project, description, priority, metadata,
+          task_level, epic_id, story_id))
 
     db.commit()
     db.close()
@@ -173,7 +188,7 @@ def create_subtask(parent_id: str, description: str,
     return task_id
 
 def get_task(task_id: str) -> Optional[Dict]:
-    """取得任務詳情（包含 metadata 和 branch）"""
+    """取得任務詳情（包含 metadata、branch 和層級資訊）"""
     db = get_db()
     cursor = db.cursor()
 
@@ -182,7 +197,8 @@ def get_task(task_id: str) -> Optional[Dict]:
                assigned_agent, result, error_message, retry_count,
                created_at, started_at, completed_at,
                phase, requires_validation, validation_status, validator_task_id,
-               metadata, executor_agent_id, rejection_count
+               metadata, executor_agent_id, rejection_count,
+               task_level, epic_id, story_id
         FROM tasks WHERE id = ?
     ''', (task_id,))
 
@@ -221,7 +237,10 @@ def get_task(task_id: str) -> Optional[Dict]:
             'metadata': metadata,
             'branch': branch,
             'executor_agent_id': row[18],
-            'rejection_count': row[19] or 0
+            'rejection_count': row[19] or 0,
+            'task_level': row[20],
+            'epic_id': row[21],
+            'story_id': row[22]
         }
     return None
 
@@ -709,9 +728,184 @@ def _ensure_lifecycle_columns():
     db.close()
 
 
+def _ensure_hierarchy_columns():
+    """確保 tasks 表有任務層級相關欄位
+
+    新增欄位：
+    - task_level: 'epic' | 'story' | 'task' | 'bug'
+    - epic_id: 所屬 Epic ID
+    - story_id: 所屬 Story ID
+    """
+    db = get_db()
+    cursor = db.cursor()
+
+    # 檢查欄位是否存在
+    cursor.execute("PRAGMA table_info(tasks)")
+    columns = [row[1] for row in cursor.fetchall()]
+
+    if 'task_level' not in columns:
+        cursor.execute('ALTER TABLE tasks ADD COLUMN task_level TEXT')
+        db.commit()
+
+    if 'epic_id' not in columns:
+        cursor.execute('ALTER TABLE tasks ADD COLUMN epic_id TEXT')
+        db.commit()
+
+    if 'story_id' not in columns:
+        cursor.execute('ALTER TABLE tasks ADD COLUMN story_id TEXT')
+        db.commit()
+
+    db.close()
+
+
 # 初始化時確保欄位存在
 _ensure_metadata_column()
 _ensure_lifecycle_columns()
+_ensure_hierarchy_columns()
+
+
+def get_epic_tasks(project: str, epic_id: str = None) -> List[Dict]:
+    """取得專案的 Epic 任務
+
+    Args:
+        project: 專案名稱
+        epic_id: 特定 Epic ID（可選，若不指定則返回所有 Epic）
+
+    Returns:
+        Epic 任務列表，每個包含 stories 子列表
+    """
+    db = get_db()
+    cursor = db.cursor()
+
+    if epic_id:
+        cursor.execute('''
+            SELECT id, description, status, phase, created_at
+            FROM tasks
+            WHERE project = ? AND id = ? AND task_level = 'epic'
+        ''', (project, epic_id))
+    else:
+        cursor.execute('''
+            SELECT id, description, status, phase, created_at
+            FROM tasks
+            WHERE project = ? AND task_level = 'epic'
+            ORDER BY created_at DESC
+        ''', (project,))
+
+    epics = []
+    for row in cursor.fetchall():
+        epic = {
+            'id': row[0],
+            'description': row[1],
+            'status': row[2],
+            'phase': row[3],
+            'created_at': row[4],
+            'stories': []
+        }
+
+        # 取得此 Epic 下的 Stories
+        cursor.execute('''
+            SELECT id, description, status, phase
+            FROM tasks
+            WHERE epic_id = ? AND task_level = 'story'
+            ORDER BY priority DESC, created_at
+        ''', (row[0],))
+
+        for story_row in cursor.fetchall():
+            epic['stories'].append({
+                'id': story_row[0],
+                'description': story_row[1],
+                'status': story_row[2],
+                'phase': story_row[3]
+            })
+
+        epics.append(epic)
+
+    db.close()
+    return epics
+
+
+def get_story_tasks(story_id: str) -> List[Dict]:
+    """取得 Story 下的所有任務
+
+    Args:
+        story_id: Story ID
+
+    Returns:
+        任務列表（包含 task 和 bug 類型）
+    """
+    db = get_db()
+    cursor = db.cursor()
+
+    cursor.execute('''
+        SELECT id, description, status, phase, task_level, assigned_agent
+        FROM tasks
+        WHERE story_id = ?
+        ORDER BY
+            CASE task_level
+                WHEN 'task' THEN 1
+                WHEN 'bug' THEN 2
+                ELSE 3
+            END,
+            priority DESC, created_at
+    ''', (story_id,))
+
+    tasks = []
+    for row in cursor.fetchall():
+        tasks.append({
+            'id': row[0],
+            'description': row[1],
+            'status': row[2],
+            'phase': row[3],
+            'task_level': row[4],
+            'assigned_agent': row[5]
+        })
+
+    db.close()
+    return tasks
+
+
+def get_hierarchy_summary(project: str) -> Dict:
+    """取得專案的任務層級摘要
+
+    Returns:
+        {
+            'epics': int,
+            'stories': int,
+            'tasks': int,
+            'bugs': int,
+            'by_status': {...}
+        }
+    """
+    db = get_db()
+    cursor = db.cursor()
+
+    cursor.execute('''
+        SELECT task_level, status, COUNT(*) as cnt
+        FROM tasks
+        WHERE project = ? AND task_level IS NOT NULL
+        GROUP BY task_level, status
+    ''', (project,))
+
+    levels = {'epic': 0, 'story': 0, 'task': 0, 'bug': 0}
+    by_status = {}
+
+    for row in cursor.fetchall():
+        level, status, count = row[0], row[1], row[2]
+        if level:
+            levels[level] = levels.get(level, 0) + count
+        if status not in by_status:
+            by_status[status] = {}
+        by_status[status][level] = count
+
+    db.close()
+
+    return {
+        'epics': levels.get('epic', 0),
+        'stories': levels.get('story', 0),
+        'tasks': levels.get('task', 0),
+        'bugs': levels.get('bug', 0),
+        'by_status': by_status
+    }
 
 
 __all__ = [
@@ -732,5 +926,9 @@ __all__ = [
     'get_active_tasks_for_project',
     'get_task_branch',
     'set_task_branch',
-    'load_branch_context'
+    'load_branch_context',
+    # 層級任務相關
+    'get_epic_tasks',
+    'get_story_tasks',
+    'get_hierarchy_summary'
 ]

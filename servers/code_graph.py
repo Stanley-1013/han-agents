@@ -74,6 +74,20 @@ get_code_graph_stats(project) -> Dict
         'kinds': {kind: count},
         'last_sync': datetime
     }
+
+get_class_dependencies_bfs(project, class_name, max_depth=2, include_edges=['imports', 'extends', 'implements', 'injects']) -> Dict
+    BFS 遍歷類別依賴圖（用於 Unit Test context 收集）
+    - class_name: 類別名稱（可以是簡單名稱或完整名稱）
+    - max_depth: 最大遍歷深度（預設 2）
+    - include_edges: 要遍歷的邊類型
+    Returns: {
+        'root': str,  # 根節點 ID
+        'dependencies': [
+            {'id': str, 'name': str, 'kind': str, 'file_path': str, 'depth': int, 'via': str}
+        ],
+        'interfaces_only': [...],  # 只返回介面簽名的節點
+        'total': int
+    }
 """
 
 # =============================================================================
@@ -558,3 +572,126 @@ def summarize_file(project: str, file_path: str) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+def get_class_dependencies_bfs(
+    project: str,
+    class_name: str,
+    max_depth: int = 2,
+    include_edges: List[str] = None
+) -> Dict:
+    """
+    BFS 遍歷類別依賴圖（用於 Unit Test context 收集）
+
+    Args:
+        project: 專案名稱
+        class_name: 類別名稱（簡單名稱或完整名稱）
+        max_depth: 最大遍歷深度（預設 2）
+        include_edges: 要遍歷的邊類型（預設 imports, extends, implements, injects）
+
+    Returns:
+        {
+            'root': str,  # 根節點 ID
+            'root_file': str,  # 根節點檔案路徑
+            'dependencies': [
+                {'id': str, 'name': str, 'kind': str, 'file_path': str, 'depth': int, 'via': str}
+            ],
+            'interfaces_only': [...],  # 介面類型的節點（建議只讀簽名）
+            'total': int
+        }
+    """
+    if include_edges is None:
+        include_edges = ['imports', 'extends', 'implements', 'injects']
+
+    conn = get_db()
+
+    try:
+        # 1. 找到根節點（類別）
+        cursor = conn.execute(
+            """
+            SELECT id, name, kind, file_path FROM code_nodes
+            WHERE project = ? AND (name = ? OR id LIKE ?)
+            AND kind IN ('class', 'interface', 'enum')
+            LIMIT 1
+            """,
+            (project, class_name, f"%{class_name}%")
+        )
+        root_row = cursor.fetchone()
+
+        if not root_row:
+            return {
+                'root': None,
+                'error': f"Class not found: {class_name}",
+                'dependencies': [],
+                'interfaces_only': [],
+                'total': 0
+            }
+
+        root_id = root_row['id']
+        root_file = root_row['file_path']
+
+        # 2. BFS 遍歷
+        from collections import deque
+
+        visited = {root_id}
+        queue = deque([(root_id, 0, '')])  # (node_id, depth, via_edge_kind)
+        dependencies = []
+        interfaces_only = []
+
+        while queue:
+            current_id, depth, via = queue.popleft()
+
+            if depth >= max_depth:
+                continue
+
+            # 查詢此節點的 outgoing edges
+            edge_kinds_placeholder = ','.join(['?' for _ in include_edges])
+            cursor = conn.execute(
+                f"""
+                SELECT e.to_id, e.kind, n.name, n.kind as node_kind, n.file_path, n.signature
+                FROM code_edges e
+                LEFT JOIN code_nodes n ON e.to_id = n.id AND e.project = n.project
+                WHERE e.project = ? AND e.from_id = ?
+                AND e.kind IN ({edge_kinds_placeholder})
+                """,
+                [project, current_id] + include_edges
+            )
+
+            for row in cursor.fetchall():
+                to_id = row['to_id']
+                if to_id in visited:
+                    continue
+
+                visited.add(to_id)
+
+                dep = {
+                    'id': to_id,
+                    'name': row['name'],
+                    'kind': row['node_kind'],
+                    'file_path': row['file_path'],
+                    'depth': depth + 1,
+                    'via': row['kind'],
+                    'signature': row['signature']
+                }
+                dependencies.append(dep)
+
+                # 標記介面類型（只需讀簽名）
+                if row['node_kind'] == 'interface':
+                    interfaces_only.append(dep)
+
+                # 繼續 BFS
+                queue.append((to_id, depth + 1, row['kind']))
+
+        # 3. 按深度排序
+        dependencies.sort(key=lambda x: (x['depth'], x['name'] or ''))
+
+        return {
+            'root': root_id,
+            'root_file': root_file,
+            'dependencies': dependencies,
+            'interfaces_only': interfaces_only,
+            'total': len(dependencies)
+        }
+
+    finally:
+        conn.close()

@@ -252,6 +252,11 @@ class RegexExtractor:
             r'^\s*(?:public\s+|private\s+|protected\s+)?static\s+final\s+([\w.<>\[\]]+)\s+([A-Z][A-Z0-9_]*)\s*=',
             re.MULTILINE
         ),
+        # 新增：欄位上的依賴注入註解（Spring/Jakarta）
+        'injected_field': re.compile(
+            r'^\s*(@(?:Autowired|Inject|Resource|Value|MockBean|Mock|InjectMocks)(?:\([^)]*\))?)\s*(?:private\s+|protected\s+|public\s+)?(?:final\s+)?([\w.<>\[\]]+)\s+(\w+)\s*;',
+            re.MULTILINE
+        ),
     }
 
     # Rust patterns
@@ -1027,6 +1032,33 @@ class RegexExtractor:
                     from_id=file_node.id,
                     to_id=method_id,
                     kind='defines'
+                ))
+
+        # 提取依賴注入欄位（@Autowired, @Inject, @MockBean 等）
+        for match in cls.JAVA_PATTERNS['injected_field'].finditer(cleaned_content):
+            annotation = match.group(1)  # @Autowired 等
+            field_type = match.group(2).strip()  # 欄位類型
+            field_name = match.group(3)  # 欄位名稱
+            line_num = cleaned_content[:match.start()].count('\n') + 1
+
+            # 找到包含此欄位的 class
+            containing_class = None
+            for type_name, type_id, type_start, type_end in reversed(type_ranges):
+                if type_start < line_num < type_end:
+                    containing_class = type_id
+                    break
+
+            if containing_class:
+                # 移除泛型部分取得基本類型
+                base_type = field_type.split('<')[0].strip()
+
+                # 建立 injects edge（隱式依賴）
+                result.edges.append(CodeEdge(
+                    from_id=containing_class,
+                    to_id=f"class.{base_type}",
+                    kind='injects',
+                    line_number=line_num,
+                    confidence=0.9
                 ))
 
         # 提取 constants (static final UPPER_CASE)
