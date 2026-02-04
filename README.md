@@ -33,13 +33,6 @@ git clone https://github.com/Stanley-1013/han-agents.git "%USERPROFILE%\.claude\
 git clone https://github.com/Stanley-1013/han-agents.git .claude/skills/han-agents
 ```
 
-For global install, add to `~/.claude/settings.json`:
-```json
-{
-  "skills": ["~/.claude/skills/han-agents"]
-}
-```
-
 </details>
 
 <details>
