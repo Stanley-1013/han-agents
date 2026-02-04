@@ -178,6 +178,15 @@ The script auto-detects your platform and performs the appropriate setup:
 | Cursor | ✅ Initialize | ✅ Copy to `.cursor/agents/` | ❌ Not supported |
 | Others | ✅ Initialize | ❌ No agents directory | ❌ Not supported |
 
+**About Agent Files**: The `reference/agents/*.md` files define agent behaviors (PFC, Executor, Critic, etc.). For the AI coding agent to use them with the Task tool's `subagent_type` parameter, they must be copied to the platform's agents directory:
+
+| Platform | Agents Directory |
+|----------|-----------------|
+| Claude Code | `~/.claude/agents/` (global) |
+| Cursor | `.cursor/agents/` (project-level) |
+
+The install script handles this automatically. If you skip the script or need manual setup, copy the files from `reference/agents/` to your platform's agents directory.
+
 Install options:
 - `--skip-prompts`: Non-interactive mode (recommended for scripts)
 - `--all`: Run all optional setup steps
