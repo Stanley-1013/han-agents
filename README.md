@@ -45,6 +45,9 @@ git clone https://github.com/Stanley-1013/han-agents.git ~/.cursor/skills/han-ag
 # Windows (PowerShell)
 git clone https://github.com/Stanley-1013/han-agents.git "$env:USERPROFILE\.cursor\skills\han-agents"
 
+# Windows (CMD)
+git clone https://github.com/Stanley-1013/han-agents.git "%USERPROFILE%\.cursor\skills\han-agents"
+
 # Project-level
 git clone https://github.com/Stanley-1013/han-agents.git .cursor/skills/han-agents
 ```
@@ -71,6 +74,9 @@ git clone https://github.com/Stanley-1013/han-agents.git ~/.cline/skills/han-age
 # Windows (PowerShell)
 git clone https://github.com/Stanley-1013/han-agents.git "$env:USERPROFILE\.cline\skills\han-agents"
 
+# Windows (CMD)
+git clone https://github.com/Stanley-1013/han-agents.git "%USERPROFILE%\.cline\skills\han-agents"
+
 # Project-level
 git clone https://github.com/Stanley-1013/han-agents.git .cline/skills/han-agents
 ```
@@ -83,11 +89,17 @@ git clone https://github.com/Stanley-1013/han-agents.git .cline/skills/han-agent
 <summary><b>Codex CLI (OpenAI)</b></summary>
 
 ```bash
-# macOS/Linux
+# macOS/Linux (global)
 git clone https://github.com/Stanley-1013/han-agents.git ~/.codex/skills/han-agents
 
 # Windows (PowerShell)
 git clone https://github.com/Stanley-1013/han-agents.git "$env:USERPROFILE\.codex\skills\han-agents"
+
+# Windows (CMD)
+git clone https://github.com/Stanley-1013/han-agents.git "%USERPROFILE%\.codex\skills\han-agents"
+
+# Project-level
+git clone https://github.com/Stanley-1013/han-agents.git .codex/skills/han-agents
 ```
 
 </details>
@@ -111,6 +123,9 @@ git clone https://github.com/Stanley-1013/han-agents.git ~/.antigravity/skills/h
 
 # Windows (PowerShell)
 git clone https://github.com/Stanley-1013/han-agents.git "$env:USERPROFILE\.antigravity\skills\han-agents"
+
+# Windows (CMD)
+git clone https://github.com/Stanley-1013/han-agents.git "%USERPROFILE%\.antigravity\skills\han-agents"
 
 # Project-level
 git clone https://github.com/Stanley-1013/han-agents.git .antigravity/skills/han-agents
@@ -351,7 +366,7 @@ Schema: [brain/schema.sql](brain/schema.sql)
 | [Cursor](https://cursor.com) | `~/.cursor/skills/` or `.cursor/skills/` | Global / Project |
 | [Windsurf](https://windsurf.com) | `.windsurf/skills/` | Project |
 | [Cline](https://cline.bot) | `~/.cline/skills/` or `.cline/skills/` | Global / Project |
-| [Codex CLI](https://developers.openai.com/codex) | `~/.codex/skills/` | Global |
+| [Codex CLI](https://developers.openai.com/codex) | `~/.codex/skills/` or `.codex/skills/` | Global / Project |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `.gemini/skills/` | Project |
 | [Antigravity](https://antigravity.google) | `~/.antigravity/skills/` or `.antigravity/skills/` | Global / Project |
 | [Kiro](https://kiro.dev) | Powers system (one-click install) | - |
