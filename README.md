@@ -20,7 +20,7 @@ Choose your AI coding agent and clone to the appropriate location:
 <summary><b>Claude Code</b></summary>
 
 ```bash
-# macOS/Linux
+# macOS/Linux (global)
 git clone https://github.com/Stanley-1013/han-agents.git ~/.claude/skills/han-agents
 
 # Windows (PowerShell)
@@ -28,9 +28,12 @@ git clone https://github.com/Stanley-1013/han-agents.git "$env:USERPROFILE\.clau
 
 # Windows (CMD)
 git clone https://github.com/Stanley-1013/han-agents.git "%USERPROFILE%\.claude\skills\han-agents"
+
+# Project-level (recommended for team projects)
+git clone https://github.com/Stanley-1013/han-agents.git .claude/skills/han-agents
 ```
 
-Then add to `~/.claude/settings.json`:
+For global install, add to `~/.claude/settings.json`:
 ```json
 {
   "skills": ["~/.claude/skills/han-agents"]
@@ -111,10 +114,13 @@ git clone https://github.com/Stanley-1013/han-agents.git .gemini/skills/han-agen
 
 ```bash
 # macOS/Linux (global)
-git clone https://github.com/Stanley-1013/han-agents.git ~/.gemini/antigravity/skills/han-agents
+git clone https://github.com/Stanley-1013/han-agents.git ~/.antigravity/skills/han-agents
+
+# Windows (PowerShell)
+git clone https://github.com/Stanley-1013/han-agents.git "$env:USERPROFILE\.antigravity\skills\han-agents"
 
 # Project-level
-git clone https://github.com/Stanley-1013/han-agents.git .agent/skills/han-agents
+git clone https://github.com/Stanley-1013/han-agents.git .antigravity/skills/han-agents
 ```
 
 </details>
@@ -128,21 +134,32 @@ Kiro uses the **Powers** system with one-click install. Visit [kiro.dev](https:/
 
 ### Step 2: Run Install Script
 
-Run the install script to initialize the database and configure your platform:
+Run the install script from **inside the cloned directory**:
 
 ```bash
-# Run from your skills directory (script auto-detects platform)
-python <skills-path>/han-agents/scripts/install.py --skip-prompts
+# cd into the cloned han-agents directory first
+cd <path-to-han-agents>
 
-# Examples:
-# Claude Code
-python ~/.claude/skills/han-agents/scripts/install.py --skip-prompts
+# Then run install (works on all platforms)
+python scripts/install.py --skip-prompts
+```
 
-# Cursor
-python ~/.cursor/skills/han-agents/scripts/install.py --skip-prompts
+**Examples:**
+```bash
+# macOS/Linux - global install
+cd ~/.claude/skills/han-agents && python scripts/install.py --skip-prompts
 
-# Windsurf (project-level)
-python .windsurf/skills/han-agents/scripts/install.py --skip-prompts
+# macOS/Linux - project-level install
+cd .claude/skills/han-agents && python scripts/install.py --skip-prompts
+
+# Windows (PowerShell) - global install
+cd "$env:USERPROFILE\.claude\skills\han-agents"; python scripts/install.py --skip-prompts
+
+# Windows (PowerShell) - project-level install
+cd .claude\skills\han-agents; python scripts/install.py --skip-prompts
+
+# Windows (CMD) - global install
+cd "%USERPROFILE%\.claude\skills\han-agents" && python scripts/install.py --skip-prompts
 ```
 
 The script auto-detects your platform and performs the appropriate setup:
@@ -299,18 +316,22 @@ from servers.memory import (
 
 ## Scripts
 
+Run from inside the han-agents directory:
+
 ```bash
+cd <path-to-han-agents>
+
 # Install/update agents, hooks, and database
-python ~/.claude/skills/han-agents/scripts/install.py --skip-prompts
+python scripts/install.py --skip-prompts
 
 # Diagnostics (verify installation)
-python ~/.claude/skills/han-agents/scripts/doctor.py
+python scripts/doctor.py
 
 # Sync Code Graph for a project
-python ~/.claude/skills/han-agents/scripts/sync.py /path/to/project
+python scripts/sync.py /path/to/project
 
 # Initialize project Skill
-python ~/.claude/skills/han-agents/scripts/init_project.py my-project /path/to/project
+python scripts/init_project.py my-project /path/to/project
 ```
 
 ## Documentation
@@ -333,13 +354,13 @@ Schema: [brain/schema.sql](brain/schema.sql)
 
 | Platform | Skills Directory | Scope |
 |----------|-----------------|-------|
-| [Claude Code](https://claude.ai/code) | `~/.claude/skills/` | Global |
+| [Claude Code](https://claude.ai/code) | `~/.claude/skills/` or `.claude/skills/` | Global / Project |
 | [Cursor](https://cursor.com) | `~/.cursor/skills/` or `.cursor/skills/` | Global / Project |
 | [Windsurf](https://windsurf.com) | `.windsurf/skills/` | Project |
 | [Cline](https://cline.bot) | `~/.cline/skills/` or `.cline/skills/` | Global / Project |
 | [Codex CLI](https://developers.openai.com/codex) | `~/.codex/skills/` | Global |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `.gemini/skills/` | Project |
-| [Antigravity](https://antigravity.google) | `~/.gemini/antigravity/skills/` or `.agent/skills/` | Global / Project |
+| [Antigravity](https://antigravity.google) | `~/.antigravity/skills/` or `.antigravity/skills/` | Global / Project |
 | [Kiro](https://kiro.dev) | Powers system (one-click install) | - |
 
 ### Feature Support
