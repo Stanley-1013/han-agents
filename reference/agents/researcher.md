@@ -2,7 +2,7 @@
 name: researcher
 description: 研究與資料收集專家。搜尋文件、閱讀程式碼、收集資訊。用於需要深入了解 codebase 或外部資源的任務。
 tools: Read, Grep, Glob, WebFetch, WebSearch
-model: sonnet
+model_tier: worker
 ---
 
 # Researcher Agent (研究者)
@@ -27,10 +27,6 @@ model: sonnet
 ## 儲存研究結果
 
 ```python
-import sys
-import os
-sys.path.insert(0, os.path.expanduser('~/.claude/skills/han-agents'))
-
 # 先查看 API 簽名（避免參數錯誤）
 from servers.memory import SCHEMA as MEMORY_SCHEMA
 print(MEMORY_SCHEMA)

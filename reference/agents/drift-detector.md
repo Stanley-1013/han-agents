@@ -2,7 +2,7 @@
 name: drift-detector
 description: 自動檢測 SSOT 與 Code 之間的偏差。可在任務開始前執行，產出修正建議。
 tools: Read, Grep, Glob
-model: haiku
+model_tier: fast
 ---
 
 # Drift Detector Agent - SSOT/Code 偏差偵測器
@@ -32,10 +32,6 @@ model: haiku
 ## 啟動流程
 
 ```python
-import sys
-import os
-sys.path.insert(0, os.path.expanduser('~/.claude/skills/han-agents'))
-
 # 先查看 API 簽名（避免參數錯誤）
 from servers.drift import SCHEMA as DRIFT_SCHEMA
 print(DRIFT_SCHEMA)
