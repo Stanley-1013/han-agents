@@ -9,9 +9,7 @@ import os
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
-# 動態計算資料庫路徑（相對於此模組位置）
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BRAIN_DB = os.path.join(_BASE_DIR, 'brain', 'brain.db')
+from servers import managed_connection
 
 SCHEMA = """
 === Tasks Server ===
@@ -93,9 +91,6 @@ load_branch_context(branch, project_dir=None) -> str
     Returns: 組合的 context 字符串（doctrine + flow_spec + 相關 memory）
 """
 
-def get_db():
-    from servers import ensure_db
-    return ensure_db()
 
 def create_task(project: str, description: str, priority: int = 5,
                 parent_id: str = None, branch: Dict = None,
@@ -120,37 +115,37 @@ def create_task(project: str, description: str, priority: int = 5,
     Returns:
         task_id
     """
-    # 驗證 task_level
     valid_levels = ['epic', 'story', 'task', 'bug', None]
     if task_level not in valid_levels:
         raise ValueError(f"Invalid task_level: {task_level}. Must be one of {valid_levels[:-1]}")
 
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    task_id = str(uuid.uuid4())[:8]
+        task_id = str(uuid.uuid4())[:8]
 
-    # 構建 metadata
-    metadata = None
-    if branch:
-        metadata = json.dumps({'branch': branch})
+        metadata = None
+        if branch:
+            metadata = json.dumps({'branch': branch})
 
-    cursor.execute('''
-        INSERT INTO tasks (id, parent_id, project, description, priority, metadata,
-                          task_level, epic_id, story_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (task_id, parent_id, project, description, priority, metadata,
-          task_level, epic_id, story_id))
+        cursor.execute('''
+            INSERT INTO tasks (id, parent_id, project, description, priority, metadata,
+                              task_level, epic_id, story_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (task_id, parent_id, project, description, priority, metadata,
+              task_level, epic_id, story_id))
 
-    db.commit()
-    db.close()
-    return task_id
+        db.commit()
+        return task_id
 
 def create_subtask(parent_id: str, description: str,
                    assigned_agent: str = 'executor',
                    depends_on: List[str] = None,
                    priority: int = 5,
-                   requires_validation: bool = True) -> str:
+                   requires_validation: bool = True,
+                   task_level: str = 'task',
+                   epic_id: str = None,
+                   story_id: str = None) -> str:
     """建立子任務
 
     Args:
@@ -160,90 +155,100 @@ def create_subtask(parent_id: str, description: str,
         depends_on: 依賴的任務 ID 列表
         priority: 優先級 (1-10)
         requires_validation: 是否需要 Critic 驗證 (預設 True)
+        task_level: 任務層級 (epic/story/task/bug)
+        epic_id: 所屬 Epic ID（None 時自動從 parent 繼承）
+        story_id: 所屬 Story ID（None 時自動從 parent 繼承）
     """
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    # 取得父任務的專案
-    cursor.execute('SELECT project FROM tasks WHERE id = ?', (parent_id,))
-    row = cursor.fetchone()
-    project = row[0] if row else None
+        cursor.execute(
+            'SELECT project, task_level, epic_id, story_id FROM tasks WHERE id = ?',
+            (parent_id,)
+        )
+        row = cursor.fetchone()
+        project = row[0] if row else None
 
-    task_id = str(uuid.uuid4())[:8]
-    cursor.execute('''
-        INSERT INTO tasks (id, parent_id, project, description, assigned_agent, priority, requires_validation)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (task_id, parent_id, project, description, assigned_agent, priority,
-          1 if requires_validation else 0))
+        # Auto-inherit hierarchy from parent
+        if row:
+            parent_level = row[1]
+            if epic_id is None:
+                epic_id = parent_id if parent_level == 'epic' else row[2]
+            if story_id is None:
+                story_id = parent_id if parent_level == 'story' else row[3]
 
-    # 建立依賴關係
-    if depends_on:
-        for dep_id in depends_on:
-            cursor.execute('''
-                INSERT INTO task_dependencies (task_id, depends_on_task_id)
-                VALUES (?, ?)
-            ''', (task_id, dep_id))
+        task_id = str(uuid.uuid4())[:8]
+        cursor.execute('''
+            INSERT INTO tasks (id, parent_id, project, description, assigned_agent,
+                             priority, requires_validation, task_level, epic_id, story_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (task_id, parent_id, project, description, assigned_agent, priority,
+              1 if requires_validation else 0, task_level, epic_id, story_id))
 
-    db.commit()
-    db.close()
-    return task_id
+        if depends_on:
+            for dep_id in depends_on:
+                cursor.execute('''
+                    INSERT INTO task_dependencies (task_id, depends_on_task_id)
+                    VALUES (?, ?)
+                ''', (task_id, dep_id))
+
+        db.commit()
+        return task_id
 
 def get_task(task_id: str) -> Optional[Dict]:
     """取得任務詳情（包含 metadata、branch 和層級資訊）"""
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    cursor.execute('''
-        SELECT id, parent_id, project, description, status, priority,
-               assigned_agent, result, error_message, retry_count,
-               created_at, started_at, completed_at,
-               phase, requires_validation, validation_status, validator_task_id,
-               metadata, executor_agent_id, rejection_count,
-               task_level, epic_id, story_id
-        FROM tasks WHERE id = ?
-    ''', (task_id,))
+        cursor.execute('''
+            SELECT id, parent_id, project, description, status, priority,
+                   assigned_agent, result, error_message, retry_count,
+                   created_at, started_at, completed_at,
+                   phase, requires_validation, validation_status, validator_task_id,
+                   metadata, executor_agent_id, rejection_count,
+                   task_level, epic_id, story_id
+            FROM tasks WHERE id = ?
+        ''', (task_id,))
 
-    row = cursor.fetchone()
-    db.close()
+        row = cursor.fetchone()
 
-    if row:
-        # 解析 metadata
-        metadata = None
-        branch = None
-        if row[17]:
-            try:
-                metadata = json.loads(row[17])
-                branch = metadata.get('branch')
-            except json.JSONDecodeError:
-                pass
+        if row:
+            metadata = None
+            branch = None
+            if row[17]:
+                try:
+                    metadata = json.loads(row[17])
+                    branch = metadata.get('branch')
+                except json.JSONDecodeError:
+                    pass
 
-        return {
-            'id': row[0],
-            'parent_id': row[1],
-            'project': row[2],
-            'description': row[3],
-            'status': row[4],
-            'priority': row[5],
-            'assigned_agent': row[6],
-            'result': row[7],
-            'error_message': row[8],
-            'retry_count': row[9],
-            'created_at': row[10],
-            'started_at': row[11],
-            'completed_at': row[12],
-            'phase': row[13],
-            'requires_validation': bool(row[14]) if row[14] is not None else True,
-            'validation_status': row[15],
-            'validator_task_id': row[16],
-            'metadata': metadata,
-            'branch': branch,
-            'executor_agent_id': row[18],
-            'rejection_count': row[19] or 0,
-            'task_level': row[20],
-            'epic_id': row[21],
-            'story_id': row[22]
-        }
-    return None
+            return {
+                'id': row[0],
+                'parent_id': row[1],
+                'project': row[2],
+                'description': row[3],
+                'status': row[4],
+                'priority': row[5],
+                'assigned_agent': row[6],
+                'result': row[7],
+                'error_message': row[8],
+                'retry_count': row[9],
+                'created_at': row[10],
+                'started_at': row[11],
+                'completed_at': row[12],
+                'phase': row[13],
+                'requires_validation': bool(row[14]) if row[14] is not None else True,
+                'validation_status': row[15],
+                'validator_task_id': row[16],
+                'metadata': metadata,
+                'branch': branch,
+                'executor_agent_id': row[18],
+                'rejection_count': row[19] or 0,
+                'task_level': row[20],
+                'epic_id': row[21],
+                'story_id': row[22]
+            }
+        return None
 
 
 def update_task(task_id: str, **kwargs) -> None:
@@ -264,125 +269,117 @@ def update_task(task_id: str, **kwargs) -> None:
     if not kwargs:
         return
 
-    # 允許更新的欄位白名單
     allowed_fields = {
         'executor_agent_id', 'rejection_count', 'status', 'result',
         'error_message', 'phase', 'validation_status', 'validator_task_id'
     }
 
-    # 過濾不允許的欄位
     updates = {k: v for k, v in kwargs.items() if k in allowed_fields}
     if not updates:
         return
 
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    # 構建 UPDATE 語句
-    set_clause = ', '.join([f'{k} = ?' for k in updates.keys()])
-    values = list(updates.values()) + [task_id]
+        set_clause = ', '.join([f'{k} = ?' for k in updates.keys()])
+        values = list(updates.values()) + [task_id]
 
-    cursor.execute(f'''
-        UPDATE tasks SET {set_clause} WHERE id = ?
-    ''', values)
+        cursor.execute(f'''
+            UPDATE tasks SET {set_clause} WHERE id = ?
+        ''', values)
 
-    db.commit()
-    db.close()
+        db.commit()
 
 def update_task_status(task_id: str, status: str,
                        result: str = None, error: str = None) -> None:
     """更新任務狀態"""
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    if status == 'running':
-        cursor.execute('''
-            UPDATE tasks
-            SET status = ?, started_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        ''', (status, task_id))
-    elif status in ('done', 'failed'):
-        cursor.execute('''
-            UPDATE tasks
-            SET status = ?, result = ?, error_message = ?,
-                completed_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        ''', (status, result, error, task_id))
-
-        if status == 'failed':
+        if status == 'running':
             cursor.execute('''
                 UPDATE tasks
-                SET retry_count = retry_count + 1
+                SET status = ?, started_at = CURRENT_TIMESTAMP
                 WHERE id = ?
-            ''', (task_id,))
-    else:
-        cursor.execute('''
-            UPDATE tasks SET status = ? WHERE id = ?
-        ''', (status, task_id))
+            ''', (status, task_id))
+        elif status in ('done', 'failed'):
+            cursor.execute('''
+                UPDATE tasks
+                SET status = ?, result = ?, error_message = ?,
+                    completed_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (status, result, error, task_id))
 
-    db.commit()
-    db.close()
+            if status == 'failed':
+                cursor.execute('''
+                    UPDATE tasks
+                    SET retry_count = retry_count + 1
+                    WHERE id = ?
+                ''', (task_id,))
+        else:
+            cursor.execute('''
+                UPDATE tasks SET status = ? WHERE id = ?
+            ''', (status, task_id))
+
+        db.commit()
 
 def get_next_task(parent_id: str) -> Optional[Dict]:
     """取得下一個可執行的任務"""
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    cursor.execute('''
-        SELECT t.id, t.description, t.assigned_agent, t.priority
-        FROM tasks t
-        WHERE t.status = 'pending'
-        AND t.parent_id = ?
-        AND NOT EXISTS (
-            SELECT 1 FROM task_dependencies td
-            JOIN tasks dep ON td.depends_on_task_id = dep.id
-            WHERE td.task_id = t.id AND dep.status != 'done'
-        )
-        ORDER BY t.priority DESC
-        LIMIT 1
-    ''', (parent_id,))
+        cursor.execute('''
+            SELECT t.id, t.description, t.assigned_agent, t.priority
+            FROM tasks t
+            WHERE t.status = 'pending'
+            AND t.parent_id = ?
+            AND NOT EXISTS (
+                SELECT 1 FROM task_dependencies td
+                JOIN tasks dep ON td.depends_on_task_id = dep.id
+                WHERE td.task_id = t.id AND dep.status != 'done'
+            )
+            ORDER BY t.priority DESC
+            LIMIT 1
+        ''', (parent_id,))
 
-    row = cursor.fetchone()
-    db.close()
+        row = cursor.fetchone()
 
-    if row:
-        return {
-            'id': row[0],
-            'description': row[1],
-            'assigned_agent': row[2],
-            'priority': row[3]
-        }
-    return None
+        if row:
+            return {
+                'id': row[0],
+                'description': row[1],
+                'assigned_agent': row[2],
+                'priority': row[3]
+            }
+        return None
 
 def get_task_progress(parent_id: str) -> Dict:
     """取得任務進度統計"""
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    cursor.execute('''
-        SELECT status, COUNT(*) FROM tasks
-        WHERE parent_id = ?
-        GROUP BY status
-    ''', (parent_id,))
+        cursor.execute('''
+            SELECT status, COUNT(*) FROM tasks
+            WHERE parent_id = ?
+            GROUP BY status
+        ''', (parent_id,))
 
-    stats = {row[0]: row[1] for row in cursor.fetchall()}
+        stats = {row[0]: row[1] for row in cursor.fetchall()}
 
-    cursor.execute('''
-        SELECT id, description, status, result
-        FROM tasks WHERE parent_id = ?
-        ORDER BY created_at
-    ''', (parent_id,))
+        cursor.execute('''
+            SELECT id, description, status, result
+            FROM tasks WHERE parent_id = ?
+            ORDER BY created_at
+        ''', (parent_id,))
 
-    subtasks = []
-    for row in cursor.fetchall():
-        subtasks.append({
-            'id': row[0],
-            'description': row[1],
-            'status': row[2],
-            'result': row[3]
-        })
-
-    db.close()
+        subtasks = []
+        for row in cursor.fetchall():
+            subtasks.append({
+                'id': row[0],
+                'description': row[1],
+                'status': row[2],
+                'result': row[3]
+            })
 
     total = sum(stats.values())
     done = stats.get('done', 0)
@@ -402,75 +399,163 @@ def log_agent_action(agent: str, task_id: str, action: str,
                      message: str, duration_ms: int = None,
                      tokens_used: int = None) -> None:
     """記錄 agent 執行日誌"""
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    cursor.execute('''
-        INSERT INTO agent_logs (agent, task_id, action, message, duration_ms, tokens_used)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (agent, task_id, action, message, duration_ms, tokens_used))
+        cursor.execute('''
+            INSERT INTO agent_logs (agent, task_id, action, message, duration_ms, tokens_used)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (agent, task_id, action, message, duration_ms, tokens_used))
 
-    db.commit()
-    db.close()
+        db.commit()
 
 def get_all_subtasks(parent_id: str) -> List[Dict]:
     """取得所有子任務"""
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    cursor.execute('''
-        SELECT id, description, status, assigned_agent, priority, result
-        FROM tasks
-        WHERE parent_id = ?
-        ORDER BY priority DESC, created_at
-    ''', (parent_id,))
+        cursor.execute('''
+            SELECT id, description, status, assigned_agent, priority, result
+            FROM tasks
+            WHERE parent_id = ?
+            ORDER BY priority DESC, created_at
+        ''', (parent_id,))
 
-    subtasks = []
-    for row in cursor.fetchall():
-        subtasks.append({
-            'id': row[0],
-            'description': row[1],
-            'status': row[2],
-            'assigned_agent': row[3],
-            'priority': row[4],
-            'result': row[5]
-        })
+        subtasks = []
+        for row in cursor.fetchall():
+            subtasks.append({
+                'id': row[0],
+                'description': row[1],
+                'status': row[2],
+                'assigned_agent': row[3],
+                'priority': row[4],
+                'result': row[5]
+            })
 
-    db.close()
-    return subtasks
+        return subtasks
 
 
 def get_unvalidated_tasks(parent_id: str) -> List[Dict]:
     """取得待驗證任務（已完成執行但未驗證）
 
-    回傳所有 status='done' 且 requires_validation=1 且 validation_status IS NULL 的任務
+    回傳所有 status='done' 且 requires_validation=1 且尚無 active critic 的任務。
+    已有 pending/running critic（validator_task_id 指向的任務）的不會重複回傳。
     """
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    cursor.execute('''
-        SELECT id, description, status, assigned_agent, result, phase
-        FROM tasks
-        WHERE parent_id = ?
-        AND status = 'done'
-        AND requires_validation = 1
-        AND (validation_status IS NULL OR validation_status = 'pending')
-        ORDER BY created_at
-    ''', (parent_id,))
+        cursor.execute('''
+            SELECT t.id, t.parent_id, t.description, t.status,
+                   t.assigned_agent, t.result, t.phase, t.validator_task_id,
+                   t.epic_id, t.story_id
+            FROM tasks t
+            WHERE t.parent_id = ?
+            AND t.status = 'done'
+            AND t.requires_validation = 1
+            AND (t.validation_status IS NULL OR t.validation_status = 'pending')
+            ORDER BY t.created_at
+        ''', (parent_id,))
 
-    tasks = []
-    for row in cursor.fetchall():
-        tasks.append({
-            'id': row[0],
-            'description': row[1],
-            'status': row[2],
-            'assigned_agent': row[3],
+        tasks = []
+        for row in cursor.fetchall():
+            # 若已有 validator_task_id，檢查其是否仍在 pending/running
+            validator_id = row[7]
+            if validator_id:
+                cursor.execute(
+                    "SELECT status FROM tasks WHERE id = ?",
+                    (validator_id,)
+                )
+                v_row = cursor.fetchone()
+                if v_row and v_row[0] in ('pending', 'running'):
+                    continue  # 已有 active critic，跳過
+
+            tasks.append({
+                'id': row[0],
+                'parent_id': row[1],
+                'description': row[2],
+                'status': row[3],
+                'assigned_agent': row[4],
+                'result': row[5],
+                'phase': row[6],
+                'validator_task_id': validator_id,
+                'epic_id': row[8],
+                'story_id': row[9],
+            })
+
+        return tasks
+
+
+def reserve_critic_task(original_task_id: str) -> Optional[Dict]:
+    """原子性地為已完成任務保留或重用 critic 驗證任務。
+
+    使用 BEGIN IMMEDIATE 確保同一任務不會重複建立 critic。
+    若已有 pending/running critic，直接返回該 critic 資訊。
+
+    Returns:
+        dict with critic task info, or None if task not eligible
+    """
+    with managed_connection() as db:
+        cursor = db.cursor()
+        cursor.execute('BEGIN IMMEDIATE')
+
+        cursor.execute('''
+            SELECT id, parent_id, project, description, result,
+                   validator_task_id, epic_id, story_id
+            FROM tasks
+            WHERE id = ?
+              AND status = 'done'
+              AND requires_validation = 1
+              AND (validation_status IS NULL OR validation_status = 'pending')
+        ''', (original_task_id,))
+        row = cursor.fetchone()
+        if not row:
+            db.commit()
+            return None
+
+        validator_task_id = row[5]
+
+        # 若已有 critic，檢查是否仍 active
+        if validator_task_id:
+            cursor.execute(
+                "SELECT id, status FROM tasks WHERE id = ?",
+                (validator_task_id,)
+            )
+            existing = cursor.fetchone()
+            if existing and existing[1] in ('pending', 'running'):
+                db.commit()
+                return {
+                    'id': existing[0],
+                    'original_task_id': row[0],
+                    'original_description': row[3],
+                    'result': row[4],
+                }
+
+        # 建立新 critic subtask
+        critic_task_id = str(uuid.uuid4())[:8]
+        cursor.execute('''
+            INSERT INTO tasks (
+                id, parent_id, project, description, assigned_agent, priority,
+                requires_validation, task_level, epic_id, story_id, status
+            ) VALUES (?, ?, ?, ?, 'critic', 5, 0, 'task', ?, ?, 'pending')
+        ''', (
+            critic_task_id, row[1], row[2], f"Validate: {row[3][:80]}",
+            row[6], row[7]
+        ))
+
+        # 標記原任務的 validator_task_id + phase
+        cursor.execute('''
+            UPDATE tasks
+            SET validation_status = 'pending', validator_task_id = ?, phase = 'validation'
+            WHERE id = ?
+        ''', (critic_task_id, original_task_id))
+
+        db.commit()
+        return {
+            'id': critic_task_id,
+            'original_task_id': row[0],
+            'original_description': row[3],
             'result': row[4],
-            'phase': row[5]
-        })
-
-    db.close()
-    return tasks
+        }
 
 
 def mark_validated(task_id: str, status: str, validator_task_id: str = None) -> None:
@@ -481,23 +566,22 @@ def mark_validated(task_id: str, status: str, validator_task_id: str = None) -> 
         status: 驗證結果 ('approved', 'rejected', 'skipped')
         validator_task_id: 執行驗證的 Critic 任務 ID
     """
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    cursor.execute('''
-        UPDATE tasks
-        SET validation_status = ?,
-            validator_task_id = ?,
-            phase = CASE
-                WHEN ? = 'approved' THEN 'documentation'
-                WHEN ? = 'rejected' THEN 'execution'
-                ELSE phase
-            END
-        WHERE id = ?
-    ''', (status, validator_task_id, status, status, task_id))
+        cursor.execute('''
+            UPDATE tasks
+            SET validation_status = ?,
+                validator_task_id = ?,
+                phase = CASE
+                    WHEN ? = 'approved' THEN 'documentation'
+                    WHEN ? = 'rejected' THEN 'execution'
+                    ELSE phase
+                END
+            WHERE id = ?
+        ''', (status, validator_task_id, status, status, task_id))
 
-    db.commit()
-    db.close()
+        db.commit()
 
 
 def advance_task_phase(task_id: str, phase: str) -> None:
@@ -511,15 +595,14 @@ def advance_task_phase(task_id: str, phase: str) -> None:
     if phase not in valid_phases:
         raise ValueError(f"Invalid phase: {phase}. Must be one of {valid_phases}")
 
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    cursor.execute('''
-        UPDATE tasks SET phase = ? WHERE id = ?
-    ''', (phase, task_id))
+        cursor.execute('''
+            UPDATE tasks SET phase = ? WHERE id = ?
+        ''', (phase, task_id))
 
-    db.commit()
-    db.close()
+        db.commit()
 
 
 def get_active_tasks_for_project(project: str) -> List[Dict]:
@@ -531,36 +614,35 @@ def get_active_tasks_for_project(project: str) -> List[Dict]:
     Returns:
         進行中的主任務列表
     """
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    cursor.execute('''
-        SELECT t.id, t.description, t.status, t.phase, t.created_at,
-               (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id) as subtask_count,
-               (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id AND status = 'done') as done_count
-        FROM tasks t
-        WHERE t.project = ?
-        AND t.parent_id IS NULL
-        AND t.status NOT IN ('done', 'failed')
-        ORDER BY t.created_at DESC
-    ''', (project,))
+        cursor.execute('''
+            SELECT t.id, t.description, t.status, t.phase, t.created_at,
+                   (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id) as subtask_count,
+                   (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id AND status = 'done') as done_count
+            FROM tasks t
+            WHERE t.project = ?
+            AND t.parent_id IS NULL
+            AND t.status NOT IN ('done', 'failed')
+            ORDER BY t.created_at DESC
+        ''', (project,))
 
-    tasks = []
-    for row in cursor.fetchall():
-        total = row[5]
-        done = row[6]
-        tasks.append({
-            'id': row[0],
-            'description': row[1],
-            'status': row[2],
-            'phase': row[3],
-            'created_at': row[4],
-            'progress': f"{done}/{total}" if total > 0 else "0/0",
-            'percentage': round(done / total * 100, 1) if total > 0 else 0
-        })
+        tasks = []
+        for row in cursor.fetchall():
+            total = row[5]
+            done = row[6]
+            tasks.append({
+                'id': row[0],
+                'description': row[1],
+                'status': row[2],
+                'phase': row[3],
+                'created_at': row[4],
+                'progress': f"{done}/{total}" if total > 0 else "0/0",
+                'percentage': round(done / total * 100, 1) if total > 0 else 0
+            })
 
-    db.close()
-    return tasks
+        return tasks
 
 
 def get_validation_summary(parent_id: str) -> Dict:
@@ -568,33 +650,31 @@ def get_validation_summary(parent_id: str) -> Dict:
 
     回傳任務的驗證狀態統計
     """
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    # 統計需要驗證的任務
-    cursor.execute('''
-        SELECT
-            COUNT(*) as total,
-            SUM(CASE WHEN validation_status = 'approved' THEN 1 ELSE 0 END) as approved,
-            SUM(CASE WHEN validation_status = 'rejected' THEN 1 ELSE 0 END) as rejected,
-            SUM(CASE WHEN validation_status = 'skipped' THEN 1 ELSE 0 END) as skipped,
-            SUM(CASE WHEN validation_status IS NULL OR validation_status = 'pending' THEN 1 ELSE 0 END) as pending
-        FROM tasks
-        WHERE parent_id = ?
-        AND requires_validation = 1
-    ''', (parent_id,))
+        cursor.execute('''
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN validation_status = 'approved' THEN 1 ELSE 0 END) as approved,
+                SUM(CASE WHEN validation_status = 'rejected' THEN 1 ELSE 0 END) as rejected,
+                SUM(CASE WHEN validation_status = 'skipped' THEN 1 ELSE 0 END) as skipped,
+                SUM(CASE WHEN validation_status IS NULL OR validation_status = 'pending' THEN 1 ELSE 0 END) as pending
+            FROM tasks
+            WHERE parent_id = ?
+            AND requires_validation = 1
+        ''', (parent_id,))
 
-    row = cursor.fetchone()
-    db.close()
+        row = cursor.fetchone()
 
-    return {
-        'total': row[0] or 0,
-        'approved': row[1] or 0,
-        'rejected': row[2] or 0,
-        'skipped': row[3] or 0,
-        'pending': row[4] or 0,
-        'validation_rate': f"{row[1] or 0}/{row[0] or 0}"
-    }
+        return {
+            'total': row[0] or 0,
+            'approved': row[1] or 0,
+            'rejected': row[2] or 0,
+            'skipped': row[3] or 0,
+            'pending': row[4] or 0,
+            'validation_rate': f"{row[1] or 0}/{row[0] or 0}"
+        }
 
 
 def get_task_branch(task_id: str) -> Optional[Dict]:
@@ -619,28 +699,25 @@ def set_task_branch(task_id: str, branch: Dict) -> None:
         task_id: 任務 ID
         branch: {'flow_id': 'flow.auth', 'domain_ids': ['domain.user']}
     """
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    # 取得現有 metadata
-    cursor.execute('SELECT metadata FROM tasks WHERE id = ?', (task_id,))
-    row = cursor.fetchone()
+        cursor.execute('SELECT metadata FROM tasks WHERE id = ?', (task_id,))
+        row = cursor.fetchone()
 
-    if row:
-        try:
-            metadata = json.loads(row[0]) if row[0] else {}
-        except json.JSONDecodeError:
-            metadata = {}
+        if row:
+            try:
+                metadata = json.loads(row[0]) if row[0] else {}
+            except json.JSONDecodeError:
+                metadata = {}
 
-        metadata['branch'] = branch
+            metadata['branch'] = branch
 
-        cursor.execute('''
-            UPDATE tasks SET metadata = ? WHERE id = ?
-        ''', (json.dumps(metadata), task_id))
+            cursor.execute('''
+                UPDATE tasks SET metadata = ? WHERE id = ?
+            ''', (json.dumps(metadata), task_id))
 
-        db.commit()
-
-    db.close()
+            db.commit()
 
 
 def load_branch_context(branch: Dict, project_dir: str = None) -> str:
@@ -659,17 +736,14 @@ def load_branch_context(branch: Dict, project_dir: str = None) -> str:
 
     sections = []
 
-    # 1. 從 SSOT 加載 context
     ssot_context = load_ssot_for_branch(branch, project_dir)
     if ssot_context:
         sections.append(ssot_context)
 
-    # 2. 從 Memory 加載相關記憶
     flow_id = branch.get('flow_id')
     domain_ids = branch.get('domain_ids', [])
 
     if flow_id:
-        # 搜尋 flow 相關的記憶
         memories = search_memory(
             query=flow_id.replace('flow.', ''),
             branch_flow=flow_id,
@@ -688,81 +762,32 @@ def load_branch_context(branch: Dict, project_dir: str = None) -> str:
     return "\n\n---\n\n".join(sections) if sections else ""
 
 
-def _ensure_metadata_column():
-    """確保 tasks 表有 metadata 欄位"""
-    db = get_db()
-    cursor = db.cursor()
+def _ensure_columns(table: str, columns: dict):
+    """確保資料表有指定欄位（冪等 schema migration）
 
-    # 檢查欄位是否存在
-    cursor.execute("PRAGMA table_info(tasks)")
-    columns = [row[1] for row in cursor.fetchall()]
-
-    if 'metadata' not in columns:
-        cursor.execute('ALTER TABLE tasks ADD COLUMN metadata TEXT')
-        db.commit()
-
-    db.close()
-
-
-def _ensure_lifecycle_columns():
-    """確保 tasks 表有任務生命週期相關欄位
-
-    新增欄位：
-    - executor_agent_id: 執行者的 agentId（用於 resume）
-    - rejection_count: 被 Critic reject 的次數
+    Args:
+        table: 資料表名稱
+        columns: {欄位名: 欄位定義} e.g. {'metadata': 'TEXT', 'count': 'INTEGER DEFAULT 0'}
     """
-    db = get_db()
-    cursor = db.cursor()
-
-    # 檢查欄位是否存在
-    cursor.execute("PRAGMA table_info(tasks)")
-    columns = [row[1] for row in cursor.fetchall()]
-
-    if 'executor_agent_id' not in columns:
-        cursor.execute('ALTER TABLE tasks ADD COLUMN executor_agent_id TEXT')
+    with managed_connection() as db:
+        cursor = db.cursor()
+        cursor.execute(f"PRAGMA table_info({table})")
+        existing = {row[1] for row in cursor.fetchall()}
+        for col_name, col_def in columns.items():
+            if col_name not in existing:
+                cursor.execute(f'ALTER TABLE {table} ADD COLUMN {col_name} {col_def}')
         db.commit()
 
-    if 'rejection_count' not in columns:
-        cursor.execute('ALTER TABLE tasks ADD COLUMN rejection_count INTEGER DEFAULT 0')
-        db.commit()
 
-    db.close()
-
-
-def _ensure_hierarchy_columns():
-    """確保 tasks 表有任務層級相關欄位
-
-    新增欄位：
-    - task_level: 'epic' | 'story' | 'task' | 'bug'
-    - epic_id: 所屬 Epic ID
-    - story_id: 所屬 Story ID
-    """
-    db = get_db()
-    cursor = db.cursor()
-
-    # 檢查欄位是否存在
-    cursor.execute("PRAGMA table_info(tasks)")
-    columns = [row[1] for row in cursor.fetchall()]
-
-    if 'task_level' not in columns:
-        cursor.execute('ALTER TABLE tasks ADD COLUMN task_level TEXT')
-        db.commit()
-
-    if 'epic_id' not in columns:
-        cursor.execute('ALTER TABLE tasks ADD COLUMN epic_id TEXT')
-        db.commit()
-
-    if 'story_id' not in columns:
-        cursor.execute('ALTER TABLE tasks ADD COLUMN story_id TEXT')
-        db.commit()
-
-    db.close()
-
-
-# 初始化時確保欄位存在
-_ensure_metadata_column()
-_ensure_lifecycle_columns()
-_ensure_hierarchy_columns()
+# 初始化時確保欄位存在（單次 DB 連線）
+_ensure_columns('tasks', {
+    'metadata': 'TEXT',
+    'executor_agent_id': 'TEXT',
+    'rejection_count': 'INTEGER DEFAULT 0',
+    'task_level': 'TEXT',
+    'epic_id': 'TEXT',
+    'story_id': 'TEXT',
+})
 
 
 def get_epic_tasks(project: str, epic_id: str = None) -> List[Dict]:
@@ -775,54 +800,52 @@ def get_epic_tasks(project: str, epic_id: str = None) -> List[Dict]:
     Returns:
         Epic 任務列表，每個包含 stories 子列表
     """
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    if epic_id:
-        cursor.execute('''
-            SELECT id, description, status, phase, created_at
-            FROM tasks
-            WHERE project = ? AND id = ? AND task_level = 'epic'
-        ''', (project, epic_id))
-    else:
-        cursor.execute('''
-            SELECT id, description, status, phase, created_at
-            FROM tasks
-            WHERE project = ? AND task_level = 'epic'
-            ORDER BY created_at DESC
-        ''', (project,))
+        if epic_id:
+            cursor.execute('''
+                SELECT id, description, status, phase, created_at
+                FROM tasks
+                WHERE project = ? AND id = ? AND task_level = 'epic'
+            ''', (project, epic_id))
+        else:
+            cursor.execute('''
+                SELECT id, description, status, phase, created_at
+                FROM tasks
+                WHERE project = ? AND task_level = 'epic'
+                ORDER BY created_at DESC
+            ''', (project,))
 
-    epics = []
-    for row in cursor.fetchall():
-        epic = {
-            'id': row[0],
-            'description': row[1],
-            'status': row[2],
-            'phase': row[3],
-            'created_at': row[4],
-            'stories': []
-        }
+        epics = []
+        for row in cursor.fetchall():
+            epic = {
+                'id': row[0],
+                'description': row[1],
+                'status': row[2],
+                'phase': row[3],
+                'created_at': row[4],
+                'stories': []
+            }
 
-        # 取得此 Epic 下的 Stories
-        cursor.execute('''
-            SELECT id, description, status, phase
-            FROM tasks
-            WHERE epic_id = ? AND task_level = 'story'
-            ORDER BY priority DESC, created_at
-        ''', (row[0],))
+            cursor.execute('''
+                SELECT id, description, status, phase
+                FROM tasks
+                WHERE epic_id = ? AND task_level = 'story'
+                ORDER BY priority DESC, created_at
+            ''', (row[0],))
 
-        for story_row in cursor.fetchall():
-            epic['stories'].append({
-                'id': story_row[0],
-                'description': story_row[1],
-                'status': story_row[2],
-                'phase': story_row[3]
-            })
+            for story_row in cursor.fetchall():
+                epic['stories'].append({
+                    'id': story_row[0],
+                    'description': story_row[1],
+                    'status': story_row[2],
+                    'phase': story_row[3]
+                })
 
-        epics.append(epic)
+            epics.append(epic)
 
-    db.close()
-    return epics
+        return epics
 
 
 def get_story_tasks(story_id: str) -> List[Dict]:
@@ -834,35 +857,34 @@ def get_story_tasks(story_id: str) -> List[Dict]:
     Returns:
         任務列表（包含 task 和 bug 類型）
     """
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    cursor.execute('''
-        SELECT id, description, status, phase, task_level, assigned_agent
-        FROM tasks
-        WHERE story_id = ?
-        ORDER BY
-            CASE task_level
-                WHEN 'task' THEN 1
-                WHEN 'bug' THEN 2
-                ELSE 3
-            END,
-            priority DESC, created_at
-    ''', (story_id,))
+        cursor.execute('''
+            SELECT id, description, status, phase, task_level, assigned_agent
+            FROM tasks
+            WHERE story_id = ?
+            ORDER BY
+                CASE task_level
+                    WHEN 'task' THEN 1
+                    WHEN 'bug' THEN 2
+                    ELSE 3
+                END,
+                priority DESC, created_at
+        ''', (story_id,))
 
-    tasks = []
-    for row in cursor.fetchall():
-        tasks.append({
-            'id': row[0],
-            'description': row[1],
-            'status': row[2],
-            'phase': row[3],
-            'task_level': row[4],
-            'assigned_agent': row[5]
-        })
+        tasks = []
+        for row in cursor.fetchall():
+            tasks.append({
+                'id': row[0],
+                'description': row[1],
+                'status': row[2],
+                'phase': row[3],
+                'task_level': row[4],
+                'assigned_agent': row[5]
+            })
 
-    db.close()
-    return tasks
+        return tasks
 
 
 def get_hierarchy_summary(project: str) -> Dict:
@@ -877,28 +899,26 @@ def get_hierarchy_summary(project: str) -> Dict:
             'by_status': {...}
         }
     """
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    cursor.execute('''
-        SELECT task_level, status, COUNT(*) as cnt
-        FROM tasks
-        WHERE project = ? AND task_level IS NOT NULL
-        GROUP BY task_level, status
-    ''', (project,))
+        cursor.execute('''
+            SELECT task_level, status, COUNT(*) as cnt
+            FROM tasks
+            WHERE project = ? AND task_level IS NOT NULL
+            GROUP BY task_level, status
+        ''', (project,))
 
-    levels = {'epic': 0, 'story': 0, 'task': 0, 'bug': 0}
-    by_status = {}
+        levels = {'epic': 0, 'story': 0, 'task': 0, 'bug': 0}
+        by_status = {}
 
-    for row in cursor.fetchall():
-        level, status, count = row[0], row[1], row[2]
-        if level:
-            levels[level] = levels.get(level, 0) + count
-        if status not in by_status:
-            by_status[status] = {}
-        by_status[status][level] = count
-
-    db.close()
+        for row in cursor.fetchall():
+            level, status, count = row[0], row[1], row[2]
+            if level:
+                levels[level] = levels.get(level, 0) + count
+            if status not in by_status:
+                by_status[status] = {}
+            by_status[status][level] = count
 
     return {
         'epics': levels.get('epic', 0),
@@ -921,6 +941,7 @@ __all__ = [
     'log_agent_action',
     'get_all_subtasks',
     'get_unvalidated_tasks',
+    'reserve_critic_task',
     'mark_validated',
     'advance_task_phase',
     'get_validation_summary',

@@ -1500,3 +1500,469 @@ def manual_validate(task_id: str, status: str, reviewer: str) -> Dict:
         'phase': phase,
         'message': f"Task {task_id} manually {status} by {reviewer}"
     }
+
+
+# =============================================================================
+# Dispatch Loop — 自動化 agent 派發
+# =============================================================================
+
+# Agent → model tier mapping
+_AGENT_TIERS = {
+    'pfc': 'planner',
+    'executor': 'worker',
+    'critic': 'worker',
+    'researcher': 'worker',
+    'memory': 'fast',
+    'drift-detector': 'fast',
+}
+
+
+def get_next_dispatch(
+    parent_id: str,
+    project_name: str,
+    project_path: str
+) -> Dict:
+    """取得下一個要派發的 agent 指令
+
+    讀取 DB 狀態，返回結構化的派發指令。主對話拿到指令後用 Task tool 執行。
+    重複呼叫直到 action='done'。
+
+    Args:
+        parent_id: 根任務 ID（epic 或 parent task）
+        project_name: 專案名稱
+        project_path: 專案目錄路徑
+
+    Returns:
+        {
+            'action': 'dispatch' | 'done' | 'blocked' | 'waiting',
+            'subagent_type': str,      # action=dispatch 時
+            'model_tier': str,         # 'planner' | 'worker' | 'fast'
+            'prompt': str,             # 完整 prompt
+            'task_id': str,            # 追蹤用
+            'progress': str,           # e.g. '3/7 tasks complete'
+            'message': str,            # 人類可讀狀態
+        }
+    """
+    from servers.tasks import (
+        get_task, get_next_task, get_unvalidated_tasks,
+        get_task_progress, get_epic_tasks, get_story_tasks,
+        reserve_critic_task,
+    )
+
+    # 取得根任務，判斷是否為 epic
+    root_task = get_task(parent_id)
+    if not root_task:
+        return {
+            'action': 'done',
+            'progress': '0/0',
+            'message': f'Task not found: {parent_id}',
+        }
+
+    is_epic = root_task.get('task_level') == 'epic'
+
+    # 收集所有要處理的 parent_ids（epic → stories, 否則就是 parent_id 本身）
+    story_ids = []
+    if is_epic:
+        stories = get_epic_tasks(root_task.get('project', project_name), parent_id)
+        for epic in stories:
+            for story in epic.get('stories', []):
+                story_ids.append(story['id'])
+        if not story_ids:
+            story_ids = [parent_id]
+    else:
+        story_ids = [parent_id]
+
+    # 彙整所有子任務的進度
+    total_done = 0
+    total_all = 0
+
+    # 1. 檢查待驗證任務（優先處理）
+    for sid in story_ids:
+        unvalidated = get_unvalidated_tasks(sid)
+        if unvalidated:
+            task = unvalidated[0]
+            # 原子性保留 critic 任務（幂等：重複呼叫返回同一 critic）
+            critic_task = reserve_critic_task(task['id'])
+            if not critic_task:
+                continue
+
+            progress = get_task_progress(sid)
+            total_all += progress['total']
+            total_done += progress['done']
+
+            critic_prompt = _build_critic_prompt(
+                critic_task, project_name, project_path
+            )
+            return {
+                'action': 'dispatch',
+                'subagent_type': 'critic',
+                'model_tier': _AGENT_TIERS['critic'],
+                'prompt': critic_prompt,
+                'task_id': critic_task['id'],
+                'progress': f'{total_done}/{total_all} tasks complete',
+                'message': f"Validating: {task['description'][:60]}",
+            }
+
+    # 2. 檢查被 reject 需重做的任務
+    for sid in story_ids:
+        rejected = _get_rejected_tasks(sid)
+        if rejected:
+            task = rejected[0]
+            progress = get_task_progress(sid)
+            prompt = _build_executor_prompt(
+                task, project_name, project_path,
+                rejection_context=task.get('_rejection_context')
+            )
+            return {
+                'action': 'dispatch',
+                'subagent_type': 'executor',
+                'model_tier': _AGENT_TIERS['executor'],
+                'prompt': prompt,
+                'task_id': task['id'],
+                'progress': f"{progress['done']}/{progress['total']} tasks complete",
+                'message': f"Retrying: {task['description'][:60]}",
+            }
+
+    # 3. 檢查下一個 pending 任務
+    for sid in story_ids:
+        next_task = get_next_task(sid)
+        if next_task:
+            progress = get_task_progress(sid)
+            prompt = _build_executor_prompt(
+                next_task, project_name, project_path
+            )
+            return {
+                'action': 'dispatch',
+                'subagent_type': next_task.get('assigned_agent', 'executor'),
+                'model_tier': _AGENT_TIERS.get(
+                    next_task.get('assigned_agent', 'executor'), 'worker'
+                ),
+                'prompt': prompt,
+                'task_id': next_task['id'],
+                'progress': f"{progress['done']}/{progress['total']} tasks complete",
+                'message': f"Executing: {next_task['description'][:60]}",
+            }
+
+    # 4. 統計總進度
+    for sid in story_ids:
+        progress = get_task_progress(sid)
+        total_all += progress['total']
+        total_done += progress['done']
+
+    # 5. 全部完成？→ 派 memory agent（依狀態決定）
+    if total_done >= total_all and total_all > 0:
+        memory_task = _get_memory_task(parent_id)
+        if not memory_task:
+            # 尚未建立 memory task，建立並派發
+            mem_task_id, mem_prompt = _build_memory_prompt(
+                parent_id, project_name
+            )
+            return {
+                'action': 'dispatch',
+                'subagent_type': 'memory',
+                'model_tier': _AGENT_TIERS['memory'],
+                'prompt': mem_prompt,
+                'task_id': mem_task_id,
+                'progress': f'{total_done}/{total_all} tasks complete',
+                'message': 'All tasks done. Storing lessons learned.',
+            }
+        if memory_task['status'] in ('pending', 'running'):
+            return {
+                'action': 'waiting',
+                'progress': f'{total_done}/{total_all} tasks complete',
+                'message': 'All tasks done. Waiting for memory task to finish.',
+            }
+        if memory_task['status'] == 'done':
+            return {
+                'action': 'done',
+                'progress': f'{total_done}/{total_all} tasks complete',
+                'message': 'All tasks completed and validated.',
+            }
+        # failed/blocked
+        return {
+            'action': 'blocked',
+            'progress': f'{total_done}/{total_all} tasks complete',
+            'message': f"Memory task is {memory_task['status']}.",
+        }
+
+    # 6. 有 blocked 的？
+    blocked = [sid for sid in story_ids
+               if get_task_progress(sid).get('failed', 0) > 0]
+    if blocked:
+        return {
+            'action': 'blocked',
+            'progress': f'{total_done}/{total_all} tasks complete',
+            'message': f'{len(blocked)} stories have blocked/failed tasks.',
+        }
+
+    # 7. 都在跑中
+    return {
+        'action': 'waiting',
+        'progress': f'{total_done}/{total_all} tasks complete',
+        'message': 'Tasks are running. Call again after agent completes.',
+    }
+
+
+def _get_rejected_tasks(parent_id: str) -> List[Dict]:
+    """取得被 reject 需重做的任務"""
+    from servers import managed_connection
+    with managed_connection() as db:
+        cursor = db.cursor()
+        cursor.execute('''
+            SELECT id, description, assigned_agent, rejection_count,
+                   executor_agent_id
+            FROM tasks
+            WHERE parent_id = ?
+            AND status = 'pending'
+            AND phase = 'execution'
+            AND rejection_count > 0
+            ORDER BY priority DESC
+            LIMIT 1
+        ''', (parent_id,))
+        row = cursor.fetchone()
+        if not row:
+            return []
+
+        task = {
+            'id': row[0],
+            'description': row[1],
+            'assigned_agent': row[2] or 'executor',
+            'rejection_count': row[3],
+            'executor_agent_id': row[4],
+        }
+
+        # 取得 rejection context from working_memory
+        cursor.execute(
+            "SELECT value FROM working_memory "
+            "WHERE task_id = ? AND key = 'critic_suggestions'",
+            (row[0],)
+        )
+        wm_row = cursor.fetchone()
+        if wm_row:
+            task['_rejection_context'] = wm_row[0]
+
+        return [task]
+
+
+def _get_memory_task(parent_id: str) -> Optional[Dict]:
+    """取得 memory task 的最新狀態
+
+    Returns:
+        {'id': str, 'status': str} or None
+    """
+    from servers import managed_connection
+    with managed_connection() as db:
+        cursor = db.cursor()
+        cursor.execute(
+            "SELECT id, status FROM tasks "
+            "WHERE parent_id = ? AND assigned_agent = 'memory' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (parent_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return {'id': row[0], 'status': row[1]}
+
+
+def _build_executor_prompt(
+    task: Dict,
+    project_name: str,
+    project_path: str,
+    rejection_context: str = None
+) -> str:
+    """建構 Executor agent 的完整 prompt"""
+    task_id = task['id']
+    description = task.get('description', '')
+
+    # 嘗試從 description 提取檔案路徑
+    context_section = ""
+    file_path = _extract_file_path(description)
+    if file_path:
+        try:
+            from servers.code_graph import get_file_structure
+            structure = get_file_structure(project_name, file_path)
+            if structure and 'error' not in structure:
+                items = []
+                for kind in ['classes', 'functions', 'interfaces']:
+                    for item in structure.get(kind, []):
+                        sig = item.get('signature', item.get('name', ''))
+                        items.append(f"  - [{item.get('kind', kind)}] {sig}")
+                if items:
+                    context_section += f"\n## File Structure: {file_path}\n"
+                    context_section += "\n".join(items[:20])
+        except Exception:
+            pass
+
+        # 嘗試取得 class dependencies
+        class_name = _extract_class_name(description)
+        if class_name:
+            try:
+                from servers.code_graph import get_class_dependencies_bfs
+                deps = get_class_dependencies_bfs(
+                    project_name, class_name, max_depth=1
+                )
+                if deps and deps.get('dependencies'):
+                    dep_lines = []
+                    for d in deps['dependencies'][:10]:
+                        dep_lines.append(
+                            f"  - {d['name']} ({d.get('kind', '?')}) "
+                            f"via {d.get('edge_kind', '?')}"
+                        )
+                    context_section += f"\n\n## Dependencies of {class_name}\n"
+                    context_section += "\n".join(dep_lines)
+            except Exception:
+                pass
+
+    rejection_section = ""
+    if rejection_context:
+        rejection_section = f"""
+
+## Previous Rejection Feedback
+
+{rejection_context}
+
+Please address the issues above in this retry.
+"""
+
+    prompt = f'''TASK_ID = "{task_id}"
+PROJECT = "{project_name}"
+PROJECT_PATH = "{project_path}"
+
+## Task
+
+{description}
+{context_section}
+{rejection_section}
+## Instructions
+
+1. Read relevant source files
+2. Execute the task as described
+3. Output results clearly
+'''
+    return prompt.strip()
+
+
+def _build_critic_prompt(
+    critic_task: Dict,
+    project_name: str,
+    project_path: str
+) -> str:
+    """建構 Critic agent 的完整 prompt
+
+    Args:
+        critic_task: reserve_critic_task() 返回的 dict
+            {'id', 'original_task_id', 'original_description', 'result'}
+
+    Returns:
+        完整的 critic prompt 字串
+    """
+    critic_task_id = critic_task['id']
+    original_task_id = critic_task['original_task_id']
+    description = critic_task.get('original_description', '')
+
+    prompt = f'''TASK_ID = "{critic_task_id}"
+ORIGINAL_TASK_ID = "{original_task_id}"
+PROJECT = "{project_name}"
+PROJECT_PATH = "{project_path}"
+
+## Validation Target
+
+Task: {description}
+Result: {critic_task.get('result', 'See code changes')}
+
+## Validation Criteria
+
+1. Does the output match the task description?
+2. Are there obvious errors or missing edge cases?
+3. Is the code quality acceptable?
+
+## Output Format
+
+You MUST output one of:
+- `## 驗證結果: APPROVED` — if the task is done correctly
+- `## 驗證結果: CONDITIONAL` — if acceptable with minor suggestions
+- `## 驗證結果: REJECTED` — if significant issues need fixing
+'''
+    return prompt.strip()
+
+
+def _build_memory_prompt(
+    parent_id: str,
+    project_name: str
+) -> tuple:
+    """建構 Memory agent 的完整 prompt
+
+    Returns:
+        (memory_task_id, prompt)
+    """
+    from servers.tasks import create_subtask, get_task_progress
+
+    # 建立 memory subtask
+    memory_task_id = create_subtask(
+        parent_id=parent_id,
+        description="Store lessons learned from completed tasks",
+        assigned_agent='memory',
+        requires_validation=False
+    )
+
+    # 彙整已完成任務
+    progress = get_task_progress(parent_id)
+    completed_summaries = []
+    for st in progress.get('subtasks', []):
+        if st['status'] == 'done':
+            completed_summaries.append(
+                f"- {st['description']}: {st.get('result', 'done')}"
+            )
+
+    prompt = f'''TASK_ID = "{memory_task_id}"
+PROJECT = "{project_name}"
+
+## Task
+
+Store lessons learned from the following completed tasks.
+
+## Completed Tasks
+
+{chr(10).join(completed_summaries) if completed_summaries else '(no details)'}
+
+## Instructions
+
+1. Identify patterns, lessons, or reusable knowledge
+2. Store important findings using store_memory()
+3. Use category='lesson' for lessons learned, 'pattern' for patterns discovered
+'''
+    return memory_task_id, prompt.strip()
+
+
+def _extract_file_path(description: str) -> Optional[str]:
+    """從任務描述中提取檔案路徑"""
+    import re
+    # 匹配常見檔案路徑 pattern
+    match = re.search(
+        r'(?:in |for |path[: ]+)([a-zA-Z0-9_./-]+\.[a-zA-Z]{1,5})',
+        description
+    )
+    if match:
+        return match.group(1)
+    # 匹配獨立的檔案路徑
+    match = re.search(
+        r'\b((?:src|lib|app|servers|tests)/[a-zA-Z0-9_./-]+\.[a-zA-Z]{1,5})\b',
+        description
+    )
+    if match:
+        return match.group(1)
+    return None
+
+
+def _extract_class_name(description: str) -> Optional[str]:
+    """從任務描述中提取 class 名稱"""
+    import re
+    match = re.search(r"(?:class|Class)\s*['\"]?(\w+)['\"]?", description)
+    if match:
+        return match.group(1)
+    # CamelCase word that looks like a class name
+    match = re.search(r'\b([A-Z][a-z]+(?:[A-Z][a-z]+)+)\b', description)
+    if match:
+        return match.group(1)
+    return None

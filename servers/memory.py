@@ -8,9 +8,7 @@ import os
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
-# 動態計算資料庫路徑（相對於此模組位置）
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BRAIN_DB = os.path.join(_BASE_DIR, 'brain', 'brain.db')
+from servers import managed_connection
 
 SCHEMA = """
 === Memory Server ===
@@ -185,10 +183,16 @@ get_recent_episodes(project, limit=5) -> List[Dict]
     取得最近的情節記憶
 """
 
-def get_db():
-    """取得資料庫連線"""
-    from servers import ensure_db
-    return ensure_db()
+
+def _safe_json_loads(val, default=None):
+    """Parse JSON, returning default on failure."""
+    if not val:
+        return default
+    try:
+        return json.loads(val)
+    except (json.JSONDecodeError, TypeError):
+        return default
+
 
 def calculate_similarity(text1: str, text2: str) -> float:
     """計算兩段文本的相似度（詞彙重疊率）
@@ -206,15 +210,12 @@ def calculate_similarity(text1: str, text2: str) -> float:
     Returns:
         0.0-1.0 的相似度分數
     """
-    # 標準化：轉小寫、分詞
     words1 = set(text1.lower().split())
     words2 = set(text2.lower().split())
 
-    # 如果都是空集合，相似度為 1.0
     if not words1 and not words2:
         return 1.0
 
-    # 計算 Jaccard 相似度：交集 / 聯集
     intersection = len(words1 & words2)
     union = len(words1 | words2)
 
@@ -236,26 +237,23 @@ def find_similar_memories(content: str, category: str = None,
     Returns:
         [{id, title, content, category, similarity_score}] - 按相似度降序排列
     """
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    # 查詢所有 active 記憶
-    sql = '''
-        SELECT id, title, content, category
-        FROM long_term_memory
-        WHERE status = 'active'
-    '''
+        sql = '''
+            SELECT id, title, content, category
+            FROM long_term_memory
+            WHERE status = 'active'
+        '''
 
-    if category:
-        sql += ' AND category = ?'
-        cursor.execute(sql, (category,))
-    else:
-        cursor.execute(sql)
+        if category:
+            sql += ' AND category = ?'
+            cursor.execute(sql, (category,))
+        else:
+            cursor.execute(sql)
 
-    rows = cursor.fetchall()
-    db.close()
+        rows = cursor.fetchall()
 
-    # 計算相似度
     similar = []
     for row in rows:
         memory_id, title, stored_content, mem_category = row
@@ -270,7 +268,6 @@ def find_similar_memories(content: str, category: str = None,
                 'similarity_score': round(similarity, 3)
             })
 
-    # 按相似度降序排列，回傳 limit 筆
     similar.sort(key=lambda x: x['similarity_score'], reverse=True)
     return similar[:limit]
 
@@ -292,76 +289,71 @@ def search_memory(query: str, project: str = None,
         branch_domain: Domain ID 過濾 (可選，如 'domain.user')
         branch_page: Page ID 過濾 (可選，如 'page.login')
     """
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    # FTS5 查詢 - 加上 * 做前綴匹配
-    fts_query = ' OR '.join([f'{word}*' for word in query.split()])
+        fts_query = ' OR '.join([f'{word}*' for word in query.split()])
 
-    sql = '''
-        SELECT ltm.id, ltm.category, ltm.title, ltm.content,
-               ltm.importance, ltm.access_count,
-               ltm.branch_flow, ltm.branch_domain
-        FROM long_term_memory ltm
-        JOIN memory_fts fts ON ltm.id = fts.rowid
-        WHERE memory_fts MATCH ?
-    '''
-    params = [fts_query]
+        sql = '''
+            SELECT ltm.id, ltm.category, ltm.title, ltm.content,
+                   ltm.importance, ltm.access_count,
+                   ltm.branch_flow, ltm.branch_domain
+            FROM long_term_memory ltm
+            JOIN memory_fts fts ON ltm.id = fts.rowid
+            WHERE memory_fts MATCH ?
+        '''
+        params = [fts_query]
 
-    if project:
-        sql += ' AND (ltm.project = ? OR ltm.project IS NULL)'
-        params.append(project)
+        if project:
+            sql += ' AND (ltm.project = ? OR ltm.project IS NULL)'
+            params.append(project)
 
-    if category:
-        sql += ' AND ltm.category = ?'
-        params.append(category)
+        if category:
+            sql += ' AND ltm.category = ?'
+            params.append(category)
 
-    # 狀態過濾
-    if not include_all:
-        sql += ' AND ltm.status = ?'
-        params.append(status)
+        if not include_all:
+            sql += ' AND ltm.status = ?'
+            params.append(status)
 
-    # Branch 過濾（Story 2: Memory 查詢增強）
-    if branch_flow:
-        sql += ' AND (ltm.branch_flow = ? OR ltm.branch_flow IS NULL)'
-        params.append(branch_flow)
+        if branch_flow:
+            sql += ' AND (ltm.branch_flow = ? OR ltm.branch_flow IS NULL)'
+            params.append(branch_flow)
 
-    if branch_domain:
-        sql += ' AND (ltm.branch_domain = ? OR ltm.branch_domain IS NULL)'
-        params.append(branch_domain)
+        if branch_domain:
+            sql += ' AND (ltm.branch_domain = ? OR ltm.branch_domain IS NULL)'
+            params.append(branch_domain)
 
-    if branch_page:
-        sql += ' AND (ltm.branch_page = ? OR ltm.branch_page IS NULL)'
-        params.append(branch_page)
+        if branch_page:
+            sql += ' AND (ltm.branch_page = ? OR ltm.branch_page IS NULL)'
+            params.append(branch_page)
 
-    sql += ' ORDER BY rank LIMIT ?'
-    params.append(limit)
+        sql += ' ORDER BY rank LIMIT ?'
+        params.append(limit)
 
-    cursor.execute(sql, params)
-    results = []
+        cursor.execute(sql, params)
+        results = []
 
-    for row in cursor.fetchall():
-        results.append({
-            'id': row[0],
-            'category': row[1],
-            'title': row[2],
-            'content': row[3],
-            'importance': row[4],
-            'access_count': row[5],
-            'branch_flow': row[6],
-            'branch_domain': row[7]
-        })
-        # 更新存取計數
-        cursor.execute('''
-            UPDATE long_term_memory
-            SET access_count = access_count + 1,
-                last_accessed = CURRENT_TIMESTAMP
-            WHERE id = ?
-        ''', (row[0],))
+        for row in cursor.fetchall():
+            results.append({
+                'id': row[0],
+                'category': row[1],
+                'title': row[2],
+                'content': row[3],
+                'importance': row[4],
+                'access_count': row[5],
+                'branch_flow': row[6],
+                'branch_domain': row[7]
+            })
+            cursor.execute('''
+                UPDATE long_term_memory
+                SET access_count = access_count + 1,
+                    last_accessed = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (row[0],))
 
-    db.commit()
-    db.close()
-    return results
+        db.commit()
+        return results
 
 
 def search_memory_semantic(
@@ -396,17 +388,14 @@ def search_memory_semantic(
             'mode': str                 # 使用的模式
         }
     """
-    # 空查詢處理
     if not query or not query.strip():
         return {
             'results': [],
             'mode': 'fts5_only'
         }
 
-    # Step 1: FTS5 召回（擴大範圍）
     candidates = search_memory(query, project, limit=30, **kwargs)
 
-    # 候選不足或不需重排時，直接返回
     if rerank_mode == 'none' or len(candidates) <= limit:
         return {
             'results': candidates[:limit],
@@ -414,7 +403,6 @@ def search_memory_semantic(
         }
 
     if rerank_mode == 'claude':
-        # 準備 Claude 重排 prompt
         rerank_context = "\n".join([
             f"[{i}] **{c.get('title', 'Untitled')}**: {c['content'][:150]}..."
             for i, c in enumerate(candidates[:20])
@@ -431,7 +419,6 @@ def search_memory_semantic(
         }
 
     if rerank_mode == 'embedding':
-        # 使用本地嵌入模型重排
         try:
             from servers.memory_embeddings import rerank_by_embedding, is_available
             if is_available():
@@ -441,19 +428,16 @@ def search_memory_semantic(
                     'mode': 'embedding_rerank'
                 }
             else:
-                # 嵌入模型不可用，降級為 FTS5
                 return {
                     'results': candidates[:limit],
                     'mode': 'fts5_fallback'
                 }
         except ImportError:
-            # 模組不存在，降級為 FTS5
             return {
                 'results': candidates[:limit],
                 'mode': 'fts5_fallback'
             }
 
-    # 未知模式，回退為 FTS5
     return {'results': candidates[:limit], 'mode': 'fallback'}
 
 
@@ -477,21 +461,20 @@ def store_memory(category: str, content: str, title: str = None,
     Returns:
         memory_id: 新建記憶的 ID
     """
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    cursor.execute('''
-        INSERT INTO long_term_memory
-        (category, subcategory, project, title, content, importance,
-         branch_flow, branch_domain, branch_page)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (category, subcategory, project, title, content, importance,
-          branch_flow, branch_domain, branch_page))
+        cursor.execute('''
+            INSERT INTO long_term_memory
+            (category, subcategory, project, title, content, importance,
+             branch_flow, branch_domain, branch_page)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (category, subcategory, project, title, content, importance,
+              branch_flow, branch_domain, branch_page))
 
-    memory_id = cursor.lastrowid
-    db.commit()
-    db.close()
-    return memory_id
+        memory_id = cursor.lastrowid
+        db.commit()
+        return memory_id
 
 def store_memory_smart(category: str, content: str, title: str = None,
                       project: str = None, importance: int = 5,
@@ -522,7 +505,6 @@ def store_memory_smart(category: str, content: str, title: str = None,
             'superseded_ids': []    # 被替代的記憶 ID 列表
         }
     """
-    # 查找相似記憶
     similar_memories = find_similar_memories(
         content,
         category=category,
@@ -533,14 +515,11 @@ def store_memory_smart(category: str, content: str, title: str = None,
     superseded_ids = []
 
     if similar_memories and auto_supersede:
-        db = get_db()
-        cursor = db.cursor()
+        with managed_connection() as db:
+            cursor = db.cursor()
 
-        try:
-            # 使用 EXCLUSIVE 事務鎖確保並發控制
             cursor.execute('BEGIN EXCLUSIVE')
 
-            # 先建立新記憶
             cursor.execute('''
                 INSERT INTO long_term_memory
                 (category, project, title, content, importance, status)
@@ -549,7 +528,6 @@ def store_memory_smart(category: str, content: str, title: str = None,
 
             new_memory_id = cursor.lastrowid
 
-            # 標記相似記憶為 superseded
             for similar in similar_memories:
                 old_id = similar['id']
                 cursor.execute('''
@@ -560,7 +538,6 @@ def store_memory_smart(category: str, content: str, title: str = None,
                 superseded_ids.append(old_id)
 
             db.commit()
-            db.close()
 
             return {
                 'id': new_memory_id,
@@ -568,13 +545,7 @@ def store_memory_smart(category: str, content: str, title: str = None,
                 'superseded_ids': superseded_ids
             }
 
-        except Exception as e:
-            db.rollback()
-            db.close()
-            raise e
-
     else:
-        # 沒有相似記憶或 auto_supersede=False，直接建立
         memory_id = store_memory(
             category=category,
             content=content,
@@ -592,11 +563,6 @@ def store_memory_smart(category: str, content: str, title: str = None,
 def challenge_memory(memory_id: int, reason: str, challenger: str = 'system') -> Dict:
     """將記憶標記為「被挑戰」狀態
 
-    流程：
-    1. 查詢記憶的當前狀態
-    2. 將狀態改為 'challenged'
-    3. 記錄挑戰事件到 episodes
-
     Args:
         memory_id: 要挑戰的記憶 ID
         reason: 挑戰原因
@@ -609,74 +575,60 @@ def challenge_memory(memory_id: int, reason: str, challenger: str = 'system') ->
             'previous_status': str
         }
     """
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    try:
-        # 查詢記憶的當前狀態
-        cursor.execute('''
-            SELECT status, project, title FROM long_term_memory
-            WHERE id = ?
-        ''', (memory_id,))
+        try:
+            cursor.execute('''
+                SELECT status, project, title FROM long_term_memory
+                WHERE id = ?
+            ''', (memory_id,))
 
-        row = cursor.fetchone()
-        if not row:
-            db.close()
+            row = cursor.fetchone()
+            if not row:
+                return {
+                    'success': False,
+                    'memory_id': memory_id,
+                    'error': 'Memory not found'
+                }
+
+            previous_status, project, title = row
+
+            cursor.execute('''
+                UPDATE long_term_memory
+                SET status = 'challenged'
+                WHERE id = ?
+            ''', (memory_id,))
+
+            cursor.execute('''
+                INSERT INTO episodes (project, event_type, summary, details)
+                VALUES (?, 'memory_challenged', ?, ?)
+            ''', (project, f"Memory #{memory_id} ({title}) challenged",
+                  json.dumps({
+                      'memory_id': memory_id,
+                      'title': title,
+                      'reason': reason,
+                      'challenger': challenger,
+                      'previous_status': previous_status
+                  })))
+
+            db.commit()
+
+            return {
+                'success': True,
+                'memory_id': memory_id,
+                'previous_status': previous_status
+            }
+
+        except Exception as e:
             return {
                 'success': False,
                 'memory_id': memory_id,
-                'error': 'Memory not found'
+                'error': str(e)
             }
-
-        previous_status, project, title = row
-
-        # 更新狀態為 challenged
-        cursor.execute('''
-            UPDATE long_term_memory
-            SET status = 'challenged'
-            WHERE id = ?
-        ''', (memory_id,))
-
-        # 記錄挑戰事件到 episodes
-        cursor.execute('''
-            INSERT INTO episodes (project, event_type, summary, details)
-            VALUES (?, 'memory_challenged', ?, ?)
-        ''', (project, f"Memory #{memory_id} ({title}) challenged",
-              json.dumps({
-                  'memory_id': memory_id,
-                  'title': title,
-                  'reason': reason,
-                  'challenger': challenger,
-                  'previous_status': previous_status
-              })))
-
-        db.commit()
-        db.close()
-
-        return {
-            'success': True,
-            'memory_id': memory_id,
-            'previous_status': previous_status
-        }
-
-    except Exception as e:
-        db.close()
-        return {
-            'success': False,
-            'memory_id': memory_id,
-            'error': str(e)
-        }
 
 def resolve_challenge(memory_id: int, resolution: str, new_content: str = None) -> Dict:
     """處理被挑戰的記憶
-
-    流程：
-    1. 驗證記憶存在且狀態為 'challenged'
-    2. 根據 resolution 執行對應操作：
-       - 'keep': 恢復為 'active'，更新 last_validated
-       - 'update': 更新內容，恢復為 'active'，更新 last_validated
-       - 'deprecate': 標記為 'deprecated'
-    3. 記錄解決過程到 episodes
 
     Args:
         memory_id: 記憶 ID
@@ -691,115 +643,101 @@ def resolve_challenge(memory_id: int, resolution: str, new_content: str = None) 
             'new_status': str
         }
     """
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    try:
-        # 驗證記憶存在且狀態為 challenged
-        cursor.execute('''
-            SELECT status, project, title, content FROM long_term_memory
-            WHERE id = ?
-        ''', (memory_id,))
-
-        row = cursor.fetchone()
-        if not row:
-            db.close()
-            return {
-                'success': False,
-                'memory_id': memory_id,
-                'error': 'Memory not found'
-            }
-
-        current_status, project, title, current_content = row
-
-        if current_status != 'challenged':
-            db.close()
-            return {
-                'success': False,
-                'memory_id': memory_id,
-                'error': f'Memory status is {current_status}, not challenged'
-            }
-
-        # 根據 resolution 執行操作
-        if resolution == 'keep':
+        try:
             cursor.execute('''
-                UPDATE long_term_memory
-                SET status = 'active', last_validated = CURRENT_TIMESTAMP
+                SELECT status, project, title, content FROM long_term_memory
                 WHERE id = ?
             ''', (memory_id,))
-            new_status = 'active'
 
-        elif resolution == 'update':
-            if new_content is None:
-                db.close()
+            row = cursor.fetchone()
+            if not row:
                 return {
                     'success': False,
                     'memory_id': memory_id,
-                    'error': 'new_content required for update resolution'
+                    'error': 'Memory not found'
+                }
+
+            current_status, project, title, current_content = row
+
+            if current_status != 'challenged':
+                return {
+                    'success': False,
+                    'memory_id': memory_id,
+                    'error': f'Memory status is {current_status}, not challenged'
+                }
+
+            if resolution == 'keep':
+                cursor.execute('''
+                    UPDATE long_term_memory
+                    SET status = 'active', last_validated = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (memory_id,))
+                new_status = 'active'
+
+            elif resolution == 'update':
+                if new_content is None:
+                    return {
+                        'success': False,
+                        'memory_id': memory_id,
+                        'error': 'new_content required for update resolution'
+                    }
+
+                cursor.execute('''
+                    UPDATE long_term_memory
+                    SET status = 'active', content = ?,
+                        updated_at = CURRENT_TIMESTAMP,
+                        last_validated = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (new_content, memory_id))
+                new_status = 'active'
+
+            elif resolution == 'deprecate':
+                cursor.execute('''
+                    UPDATE long_term_memory
+                    SET status = 'deprecated'
+                    WHERE id = ?
+                ''', (memory_id,))
+                new_status = 'deprecated'
+
+            else:
+                return {
+                    'success': False,
+                    'memory_id': memory_id,
+                    'error': f'Invalid resolution: {resolution}'
                 }
 
             cursor.execute('''
-                UPDATE long_term_memory
-                SET status = 'active', content = ?,
-                    updated_at = CURRENT_TIMESTAMP,
-                    last_validated = CURRENT_TIMESTAMP
-                WHERE id = ?
-            ''', (new_content, memory_id))
-            new_status = 'active'
+                INSERT INTO episodes (project, event_type, summary, details)
+                VALUES (?, 'challenge_resolved', ?, ?)
+            ''', (project, f"Challenge resolved for memory #{memory_id}",
+                  json.dumps({
+                      'memory_id': memory_id,
+                      'title': title,
+                      'resolution': resolution,
+                      'new_status': new_status
+                  })))
 
-        elif resolution == 'deprecate':
-            cursor.execute('''
-                UPDATE long_term_memory
-                SET status = 'deprecated'
-                WHERE id = ?
-            ''', (memory_id,))
-            new_status = 'deprecated'
+            db.commit()
 
-        else:
-            db.close()
+            return {
+                'success': True,
+                'memory_id': memory_id,
+                'resolution': resolution,
+                'new_status': new_status
+            }
+
+        except Exception as e:
             return {
                 'success': False,
                 'memory_id': memory_id,
-                'error': f'Invalid resolution: {resolution}'
+                'error': str(e)
             }
-
-        # 記錄解決過程到 episodes
-        cursor.execute('''
-            INSERT INTO episodes (project, event_type, summary, details)
-            VALUES (?, 'challenge_resolved', ?, ?)
-        ''', (project, f"Challenge resolved for memory #{memory_id}",
-              json.dumps({
-                  'memory_id': memory_id,
-                  'title': title,
-                  'resolution': resolution,
-                  'new_status': new_status
-              })))
-
-        db.commit()
-        db.close()
-
-        return {
-            'success': True,
-            'memory_id': memory_id,
-            'resolution': resolution,
-            'new_status': new_status
-        }
-
-    except Exception as e:
-        db.close()
-        return {
-            'success': False,
-            'memory_id': memory_id,
-            'error': str(e)
-        }
 
 def deprecate_memory(memory_id: int, reason: str = None) -> Dict:
     """直接廢棄記憶（不經過 challenge 流程）
-
-    流程：
-    1. 驗證記憶存在
-    2. 將狀態設為 'deprecated'
-    3. 記錄廢棄事件到 episodes
 
     Args:
         memory_id: 記憶 ID
@@ -811,60 +749,54 @@ def deprecate_memory(memory_id: int, reason: str = None) -> Dict:
             'memory_id': int
         }
     """
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    try:
-        # 驗證記憶存在
-        cursor.execute('''
-            SELECT project, title FROM long_term_memory
-            WHERE id = ?
-        ''', (memory_id,))
+        try:
+            cursor.execute('''
+                SELECT project, title FROM long_term_memory
+                WHERE id = ?
+            ''', (memory_id,))
 
-        row = cursor.fetchone()
-        if not row:
-            db.close()
+            row = cursor.fetchone()
+            if not row:
+                return {
+                    'success': False,
+                    'memory_id': memory_id,
+                    'error': 'Memory not found'
+                }
+
+            project, title = row
+
+            cursor.execute('''
+                UPDATE long_term_memory
+                SET status = 'deprecated'
+                WHERE id = ?
+            ''', (memory_id,))
+
+            cursor.execute('''
+                INSERT INTO episodes (project, event_type, summary, details)
+                VALUES (?, 'memory_deprecated', ?, ?)
+            ''', (project, f"Memory #{memory_id} ({title}) deprecated",
+                  json.dumps({
+                      'memory_id': memory_id,
+                      'title': title,
+                      'reason': reason
+                  })))
+
+            db.commit()
+
+            return {
+                'success': True,
+                'memory_id': memory_id
+            }
+
+        except Exception as e:
             return {
                 'success': False,
                 'memory_id': memory_id,
-                'error': 'Memory not found'
+                'error': str(e)
             }
-
-        project, title = row
-
-        # 更新狀態為 deprecated
-        cursor.execute('''
-            UPDATE long_term_memory
-            SET status = 'deprecated'
-            WHERE id = ?
-        ''', (memory_id,))
-
-        # 記錄廢棄事件到 episodes
-        cursor.execute('''
-            INSERT INTO episodes (project, event_type, summary, details)
-            VALUES (?, 'memory_deprecated', ?, ?)
-        ''', (project, f"Memory #{memory_id} ({title}) deprecated",
-              json.dumps({
-                  'memory_id': memory_id,
-                  'title': title,
-                  'reason': reason
-              })))
-
-        db.commit()
-        db.close()
-
-        return {
-            'success': True,
-            'memory_id': memory_id
-        }
-
-    except Exception as e:
-        db.close()
-        return {
-            'success': False,
-            'memory_id': memory_id,
-            'error': str(e)
-        }
 
 def get_challenged_memories(project: str = None, limit: int = 10) -> List[Dict]:
     """取得所有被挑戰的記憶
@@ -876,42 +808,39 @@ def get_challenged_memories(project: str = None, limit: int = 10) -> List[Dict]:
     Returns:
         [{id, title, content, category, challenged_at}]
     """
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    sql = '''
-        SELECT id, title, content, category, updated_at
-        FROM long_term_memory
-        WHERE status = 'challenged'
-    '''
-    params = []
+        sql = '''
+            SELECT id, title, content, category, updated_at
+            FROM long_term_memory
+            WHERE status = 'challenged'
+        '''
+        params = []
 
-    if project:
-        sql += ' AND (project = ? OR project IS NULL)'
-        params.append(project)
+        if project:
+            sql += ' AND (project = ? OR project IS NULL)'
+            params.append(project)
 
-    sql += ' ORDER BY updated_at DESC LIMIT ?'
-    params.append(limit)
+        sql += ' ORDER BY updated_at DESC LIMIT ?'
+        params.append(limit)
 
-    cursor.execute(sql, params)
-    results = []
+        cursor.execute(sql, params)
+        results = []
 
-    for row in cursor.fetchall():
-        results.append({
-            'id': row[0],
-            'title': row[1],
-            'content': row[2],
-            'category': row[3],
-            'challenged_at': row[4]
-        })
+        for row in cursor.fetchall():
+            results.append({
+                'id': row[0],
+                'title': row[1],
+                'content': row[2],
+                'category': row[3],
+                'challenged_at': row[4]
+            })
 
-    db.close()
-    return results
+        return results
 
 def validate_memory(memory_id: int) -> Dict:
     """更新 last_validated 為當前時間
-
-    用於定期驗證記憶仍然有效。當驗證成功時，更新 last_validated 時間戳。
 
     Args:
         memory_id: 記憶 ID
@@ -923,202 +852,186 @@ def validate_memory(memory_id: int) -> Dict:
             'validated_at': str (ISO timestamp)
         }
     """
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    try:
-        # 驗證記憶存在
-        cursor.execute('''
-            SELECT id FROM long_term_memory
-            WHERE id = ?
-        ''', (memory_id,))
+        try:
+            cursor.execute('''
+                SELECT id FROM long_term_memory
+                WHERE id = ?
+            ''', (memory_id,))
 
-        if not cursor.fetchone():
-            db.close()
+            if not cursor.fetchone():
+                return {
+                    'success': False,
+                    'memory_id': memory_id,
+                    'error': 'Memory not found'
+                }
+
+            cursor.execute('''
+                UPDATE long_term_memory
+                SET last_validated = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (memory_id,))
+
+            db.commit()
+
+            cursor.execute('''
+                SELECT last_validated FROM long_term_memory
+                WHERE id = ?
+            ''', (memory_id,))
+
+            validated_at = cursor.fetchone()[0]
+
+            return {
+                'success': True,
+                'memory_id': memory_id,
+                'validated_at': validated_at
+            }
+
+        except Exception as e:
             return {
                 'success': False,
                 'memory_id': memory_id,
-                'error': 'Memory not found'
+                'error': str(e)
             }
-
-        # 更新 last_validated 為當前時間
-        cursor.execute('''
-            UPDATE long_term_memory
-            SET last_validated = CURRENT_TIMESTAMP
-            WHERE id = ?
-        ''', (memory_id,))
-
-        db.commit()
-
-        # 取得更新後的時間戳
-        cursor.execute('''
-            SELECT last_validated FROM long_term_memory
-            WHERE id = ?
-        ''', (memory_id,))
-
-        validated_at = cursor.fetchone()[0]
-        db.close()
-
-        return {
-            'success': True,
-            'memory_id': memory_id,
-            'validated_at': validated_at
-        }
-
-    except Exception as e:
-        db.close()
-        return {
-            'success': False,
-            'memory_id': memory_id,
-            'error': str(e)
-        }
 
 def get_working_memory(task_id: str, key: str = None) -> Any:
     """讀取工作記憶"""
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    if key:
-        cursor.execute('''
-            SELECT value, data_type FROM working_memory
-            WHERE task_id = ? AND key = ?
-        ''', (task_id, key))
-        row = cursor.fetchone()
-        db.close()
-        if row:
-            return json.loads(row[0]) if row[1] == 'json' else row[0]
-        return None
-    else:
-        cursor.execute('''
-            SELECT key, value, data_type FROM working_memory
-            WHERE task_id = ?
-        ''', (task_id,))
-        result = {
-            row[0]: json.loads(row[1]) if row[2] == 'json' else row[1]
-            for row in cursor.fetchall()
-        }
-        db.close()
-        return result
+        if key:
+            cursor.execute('''
+                SELECT value, data_type FROM working_memory
+                WHERE task_id = ? AND key = ?
+            ''', (task_id, key))
+            row = cursor.fetchone()
+            if row:
+                return _safe_json_loads(row[0]) if row[1] == 'json' else row[0]
+            return None
+        else:
+            cursor.execute('''
+                SELECT key, value, data_type FROM working_memory
+                WHERE task_id = ?
+            ''', (task_id,))
+            return {
+                row[0]: _safe_json_loads(row[1]) if row[2] == 'json' else row[1]
+                for row in cursor.fetchall()
+            }
 
 def set_working_memory(task_id: str, key: str, value: Any,
                        project: str = None) -> None:
     """設定工作記憶"""
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    data_type = 'json' if isinstance(value, (dict, list)) else 'string'
-    stored_value = json.dumps(value) if data_type == 'json' else str(value)
+        data_type = 'json' if isinstance(value, (dict, list)) else 'string'
+        stored_value = json.dumps(value) if data_type == 'json' else str(value)
 
-    # 檢查是否存在
-    cursor.execute('''
-        SELECT id FROM working_memory WHERE task_id = ? AND key = ?
-    ''', (task_id, key))
-
-    if cursor.fetchone():
         cursor.execute('''
-            UPDATE working_memory
-            SET value = ?, data_type = ?
-            WHERE task_id = ? AND key = ?
-        ''', (stored_value, data_type, task_id, key))
-    else:
-        cursor.execute('''
-            INSERT INTO working_memory (task_id, project, key, value, data_type)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (task_id, project, key, stored_value, data_type))
+            SELECT id FROM working_memory WHERE task_id = ? AND key = ?
+        ''', (task_id, key))
 
-    db.commit()
-    db.close()
+        if cursor.fetchone():
+            cursor.execute('''
+                UPDATE working_memory
+                SET value = ?, data_type = ?
+                WHERE task_id = ? AND key = ?
+            ''', (stored_value, data_type, task_id, key))
+        else:
+            cursor.execute('''
+                INSERT INTO working_memory (task_id, project, key, value, data_type)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (task_id, project, key, stored_value, data_type))
+
+        db.commit()
 
 def clear_working_memory(task_id: str) -> None:
     """清除任務的工作記憶"""
-    db = get_db()
-    cursor = db.cursor()
-    cursor.execute('DELETE FROM working_memory WHERE task_id = ?', (task_id,))
-    db.commit()
-    db.close()
+    with managed_connection() as db:
+        cursor = db.cursor()
+        cursor.execute('DELETE FROM working_memory WHERE task_id = ?', (task_id,))
+        db.commit()
 
 def add_episode(project: str, event_type: str, summary: str,
                 details: Dict = None, session_id: str = None) -> int:
     """記錄事件到情節記憶"""
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    cursor.execute('''
-        INSERT INTO episodes (project, session_id, event_type, summary, details)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (project, session_id, event_type, summary,
-          json.dumps(details) if details else None))
+        cursor.execute('''
+            INSERT INTO episodes (project, session_id, event_type, summary, details)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (project, session_id, event_type, summary,
+              json.dumps(details) if details else None))
 
-    episode_id = cursor.lastrowid
-    db.commit()
-    db.close()
-    return episode_id
+        episode_id = cursor.lastrowid
+        db.commit()
+        return episode_id
 
 def get_recent_episodes(project: str, limit: int = 5) -> List[Dict]:
     """取得最近的情節記憶"""
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    cursor.execute('''
-        SELECT id, event_type, summary, details, timestamp
-        FROM episodes
-        WHERE project = ?
-        ORDER BY timestamp DESC
-        LIMIT ?
-    ''', (project, limit))
+        cursor.execute('''
+            SELECT id, event_type, summary, details, timestamp
+            FROM episodes
+            WHERE project = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+        ''', (project, limit))
 
-    results = []
-    for row in cursor.fetchall():
-        results.append({
-            'id': row[0],
-            'event_type': row[1],
-            'summary': row[2],
-            'details': json.loads(row[3]) if row[3] else None,
-            'timestamp': row[4]
-        })
+        results = []
+        for row in cursor.fetchall():
+            results.append({
+                'id': row[0],
+                'event_type': row[1],
+                'summary': row[2],
+                'details': _safe_json_loads(row[3]),
+                'timestamp': row[4]
+            })
 
-    db.close()
-    return results
+        return results
 
 def save_checkpoint(project: str, task_id: str, agent: str,
                     state: Dict, summary: str) -> int:
     """儲存 checkpoint"""
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    cursor.execute('''
-        INSERT INTO checkpoints (project, task_id, agent, state, context_summary)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (project, task_id, agent, json.dumps(state), summary))
+        cursor.execute('''
+            INSERT INTO checkpoints (project, task_id, agent, state, context_summary)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (project, task_id, agent, json.dumps(state), summary))
 
-    checkpoint_id = cursor.lastrowid
-    db.commit()
-    db.close()
-    return checkpoint_id
+        checkpoint_id = cursor.lastrowid
+        db.commit()
+        return checkpoint_id
 
 def load_checkpoint(task_id: str) -> Optional[Dict]:
     """載入最新的 checkpoint"""
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    cursor.execute('''
-        SELECT state, context_summary, created_at
-        FROM checkpoints
-        WHERE task_id = ?
-        ORDER BY created_at DESC
-        LIMIT 1
-    ''', (task_id,))
+        cursor.execute('''
+            SELECT state, context_summary, created_at
+            FROM checkpoints
+            WHERE task_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+        ''', (task_id,))
 
-    row = cursor.fetchone()
-    db.close()
+        row = cursor.fetchone()
 
-    if row:
-        return {
-            'state': json.loads(row[0]),
-            'summary': row[1],
-            'created_at': row[2]
-        }
-    return None
+        if row:
+            return {
+                'state': _safe_json_loads(row[0], default={}),
+                'summary': row[1],
+                'created_at': row[2]
+            }
+        return None
 
 def get_project_context(project: str) -> Dict:
     """取得專案的完整上下文（用於斷點重連）
@@ -1142,18 +1055,13 @@ def get_project_context(project: str) -> Dict:
     # 延遲 import 避免循環依賴
     from servers.tasks import get_active_tasks_for_project
 
-    # 1. 查進行中任務
     active_tasks = get_active_tasks_for_project(project)
-
-    # 2. 查最近 episodes
     recent_episodes = get_recent_episodes(project, limit=5)
 
-    # 3. 找「階段完成」類型的 episode
     phase_complete = [e for e in recent_episodes
                       if e['event_type'] == 'phase_complete']
     last_phase = phase_complete[0] if phase_complete else None
 
-    # 4. 生成建議
     suggestion = None
     if active_tasks:
         task = active_tasks[0]

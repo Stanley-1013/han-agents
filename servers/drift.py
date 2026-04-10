@@ -276,7 +276,7 @@ def detect_flow_drift(project: str, flow_name: str, project_dir: str) -> DriftRe
     flow_spec = None
     try:
         flow_spec = load_flow_spec(flow_name, project_dir)
-    except:
+    except Exception:
         pass
 
     if not flow_spec:

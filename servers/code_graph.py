@@ -12,7 +12,6 @@ Code Graph Server
 
 import sqlite3
 import json
-import os
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 
@@ -94,16 +93,12 @@ get_class_dependencies_bfs(project, class_name, max_depth=2, include_edges=['imp
 # Database Connection
 # =============================================================================
 
-# 動態計算資料庫路徑（相對於此模組位置）
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH = os.path.join(_BASE_DIR, 'brain', 'brain.db')
+from servers import managed_connection
 
-def get_db() -> sqlite3.Connection:
-    """取得資料庫連線"""
-    from servers import ensure_db
-    conn = ensure_db()
-    conn.row_factory = sqlite3.Row
-    return conn
+
+def _get_conn():
+    """Module-level connection context manager with Row factory."""
+    return managed_connection(row_factory=True)
 
 # =============================================================================
 # Sync API
@@ -127,9 +122,7 @@ def sync_from_directory(
     """
     from tools.code_graph_extractor import extract_from_directory
 
-    conn = get_db()
-
-    try:
+    with _get_conn() as conn:
         # 1. 取得現有的 file hashes（用於增量比對）
         existing_hashes = {}
         if incremental:
@@ -251,9 +244,6 @@ def sync_from_directory(
             'errors': []
         }
 
-    finally:
-        conn.close()
-
 # =============================================================================
 # Query API
 # =============================================================================
@@ -265,8 +255,7 @@ def get_code_nodes(
     limit: int = 100
 ) -> List[Dict]:
     """查詢 Code Nodes"""
-    conn = get_db()
-    try:
+    with _get_conn() as conn:
         query = "SELECT * FROM code_nodes WHERE project = ?"
         params = [project]
 
@@ -283,9 +272,6 @@ def get_code_nodes(
 
         cursor = conn.execute(query, params)
         return [dict(row) for row in cursor.fetchall()]
-    finally:
-        conn.close()
-
 def get_code_edges(
     project: str,
     from_id: str = None,
@@ -294,8 +280,7 @@ def get_code_edges(
     limit: int = 100
 ) -> List[Dict]:
     """查詢 Code Edges"""
-    conn = get_db()
-    try:
+    with _get_conn() as conn:
         query = "SELECT * FROM code_edges WHERE project = ?"
         params = [project]
 
@@ -316,9 +301,6 @@ def get_code_edges(
 
         cursor = conn.execute(query, params)
         return [dict(row) for row in cursor.fetchall()]
-    finally:
-        conn.close()
-
 def get_code_dependencies(
     project: str,
     node_id: str,
@@ -337,69 +319,65 @@ def get_code_dependencies(
     Returns:
         依賴節點列表，包含關係類型和深度
     """
-    conn = get_db()
-    results = []
-    visited = set()
+    with _get_conn() as conn:
+        results = []
+        visited = set()
 
-    def _traverse(current_id: str, current_depth: int, relation: str):
-        if current_depth > depth or current_id in visited:
-            return
-        visited.add(current_id)
+        def _traverse(current_id: str, current_depth: int, relation: str):
+            if current_depth > depth or current_id in visited:
+                return
+            visited.add(current_id)
 
-        if direction in ('outgoing', 'both'):
-            cursor = conn.execute(
-                """
-                SELECT e.to_id, e.kind, n.kind as node_kind, n.name, n.file_path
-                FROM code_edges e
-                LEFT JOIN code_nodes n ON e.to_id = n.id AND e.project = n.project
-                WHERE e.project = ? AND e.from_id = ?
-                """,
-                (project, current_id)
-            )
-            for row in cursor.fetchall():
-                if row['to_id'] not in visited:
-                    results.append({
-                        'id': row['to_id'],
-                        'kind': row['node_kind'],
-                        'name': row['name'],
-                        'file_path': row['file_path'],
-                        'relation': row['kind'],
-                        'direction': 'outgoing',
-                        'depth': current_depth
-                    })
-                    if current_depth < depth:
-                        _traverse(row['to_id'], current_depth + 1, row['kind'])
+            if direction in ('outgoing', 'both'):
+                cursor = conn.execute(
+                    """
+                    SELECT e.to_id, e.kind, n.kind as node_kind, n.name, n.file_path
+                    FROM code_edges e
+                    LEFT JOIN code_nodes n ON e.to_id = n.id AND e.project = n.project
+                    WHERE e.project = ? AND e.from_id = ?
+                    """,
+                    (project, current_id)
+                )
+                for row in cursor.fetchall():
+                    if row['to_id'] not in visited:
+                        results.append({
+                            'id': row['to_id'],
+                            'kind': row['node_kind'],
+                            'name': row['name'],
+                            'file_path': row['file_path'],
+                            'relation': row['kind'],
+                            'direction': 'outgoing',
+                            'depth': current_depth
+                        })
+                        if current_depth < depth:
+                            _traverse(row['to_id'], current_depth + 1, row['kind'])
 
-        if direction in ('incoming', 'both'):
-            cursor = conn.execute(
-                """
-                SELECT e.from_id, e.kind, n.kind as node_kind, n.name, n.file_path
-                FROM code_edges e
-                LEFT JOIN code_nodes n ON e.from_id = n.id AND e.project = n.project
-                WHERE e.project = ? AND e.to_id = ?
-                """,
-                (project, current_id)
-            )
-            for row in cursor.fetchall():
-                if row['from_id'] not in visited:
-                    results.append({
-                        'id': row['from_id'],
-                        'kind': row['node_kind'],
-                        'name': row['name'],
-                        'file_path': row['file_path'],
-                        'relation': row['kind'],
-                        'direction': 'incoming',
-                        'depth': current_depth
-                    })
-                    if current_depth < depth:
-                        _traverse(row['from_id'], current_depth + 1, row['kind'])
+            if direction in ('incoming', 'both'):
+                cursor = conn.execute(
+                    """
+                    SELECT e.from_id, e.kind, n.kind as node_kind, n.name, n.file_path
+                    FROM code_edges e
+                    LEFT JOIN code_nodes n ON e.from_id = n.id AND e.project = n.project
+                    WHERE e.project = ? AND e.to_id = ?
+                    """,
+                    (project, current_id)
+                )
+                for row in cursor.fetchall():
+                    if row['from_id'] not in visited:
+                        results.append({
+                            'id': row['from_id'],
+                            'kind': row['node_kind'],
+                            'name': row['name'],
+                            'file_path': row['file_path'],
+                            'relation': row['kind'],
+                            'direction': 'incoming',
+                            'depth': current_depth
+                        })
+                        if current_depth < depth:
+                            _traverse(row['from_id'], current_depth + 1, row['kind'])
 
-    try:
         _traverse(node_id, 1, '')
         return results
-    finally:
-        conn.close()
-
 def get_file_structure(project: str, file_path: str) -> Dict:
     """
     取得檔案的結構摘要
@@ -413,8 +391,7 @@ def get_file_structure(project: str, file_path: str) -> Dict:
             'imports': [...]
         }
     """
-    conn = get_db()
-    try:
+    with _get_conn() as conn:
         # 取得檔案節點
         cursor = conn.execute(
             "SELECT * FROM code_nodes WHERE project = ? AND file_path LIKE ? AND kind = 'file'",
@@ -461,17 +438,13 @@ def get_file_structure(project: str, file_path: str) -> Dict:
             'constants': [n for n in defined_nodes if n['kind'] == 'constant'],
             'imports': imports
         }
-    finally:
-        conn.close()
-
 # =============================================================================
 # Management API
 # =============================================================================
 
 def clear_code_graph(project: str) -> int:
     """清除專案的 Code Graph"""
-    conn = get_db()
-    try:
+    with _get_conn() as conn:
         cursor = conn.execute("SELECT COUNT(*) as cnt FROM code_nodes WHERE project = ?", (project,))
         count = cursor.fetchone()['cnt']
 
@@ -481,13 +454,9 @@ def clear_code_graph(project: str) -> int:
         conn.commit()
 
         return count
-    finally:
-        conn.close()
-
 def get_code_graph_stats(project: str) -> Dict:
     """取得 Code Graph 統計"""
-    conn = get_db()
-    try:
+    with _get_conn() as conn:
         # Node 統計
         cursor = conn.execute(
             "SELECT COUNT(*) as cnt FROM code_nodes WHERE project = ?",
@@ -531,9 +500,6 @@ def get_code_graph_stats(project: str) -> Dict:
             'kinds': kinds,
             'last_sync': last_sync
         }
-    finally:
-        conn.close()
-
 # =============================================================================
 # 便利函數
 # =============================================================================
@@ -604,9 +570,7 @@ def get_class_dependencies_bfs(
     if include_edges is None:
         include_edges = ['imports', 'extends', 'implements', 'injects']
 
-    conn = get_db()
-
-    try:
+    with _get_conn() as conn:
         # 1. 找到根節點（類別）
         cursor = conn.execute(
             """
@@ -693,6 +657,3 @@ def get_class_dependencies_bfs(
             'interfaces_only': interfaces_only,
             'total': len(dependencies)
         }
-
-    finally:
-        conn.close()

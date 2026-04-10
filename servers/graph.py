@@ -32,9 +32,7 @@ import os
 from typing import Optional, List, Dict, Any
 from collections import deque
 
-# 動態計算資料庫路徑（相對於此模組位置）
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BRAIN_DB = os.path.join(_BASE_DIR, 'brain', 'brain.db')
+from servers import managed_connection
 
 SCHEMA = """
 === Graph Server API ===
@@ -197,49 +195,43 @@ get_access_history(project, node_id=None, limit=50) -> List[Dict]
     Returns: [{id, node_id, agent, task_id, access_type, accessed_at}]
 """
 
-def get_db():
-    """取得資料庫連線"""
-    from servers import ensure_db
-    return ensure_db()
-
 
 def _ensure_tables():
     """確保 Graph 表存在"""
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS project_nodes (
-            id TEXT NOT NULL,
-            project TEXT NOT NULL,
-            kind TEXT NOT NULL,
-            name TEXT NOT NULL,
-            ref TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (id, project)
-        )
-    ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS project_nodes (
+                id TEXT NOT NULL,
+                project TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                name TEXT NOT NULL,
+                ref TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (id, project)
+            )
+        ''')
 
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS project_edges (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project TEXT NOT NULL,
-            from_id TEXT NOT NULL,
-            to_id TEXT NOT NULL,
-            kind TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(project, from_id, to_id, kind)
-        )
-    ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS project_edges (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project TEXT NOT NULL,
+                from_id TEXT NOT NULL,
+                to_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(project, from_id, to_id, kind)
+            )
+        ''')
 
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_edges_from ON project_edges(from_id)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_edges_to ON project_edges(to_id)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_edges_project ON project_edges(project)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_nodes_project ON project_nodes(project)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_nodes_kind ON project_nodes(kind)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_edges_from ON project_edges(from_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_edges_to ON project_edges(to_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_edges_project ON project_edges(project)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_nodes_project ON project_nodes(project)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_nodes_kind ON project_nodes(kind)')
 
-    db.commit()
-    db.close()
+        db.commit()
 
 
 def add_node(node_id: str, project: str, kind: str, name: str,
@@ -257,20 +249,17 @@ def add_node(node_id: str, project: str, kind: str, name: str,
         True if created, False if already exists
     """
     _ensure_tables()
-    db = get_db()
-    cursor = db.cursor()
-
-    try:
-        cursor.execute('''
-            INSERT INTO project_nodes (id, project, kind, name, ref)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (node_id, project, kind, name, ref))
-        db.commit()
-        db.close()
-        return True
-    except sqlite3.IntegrityError:
-        db.close()
-        return False
+    with managed_connection() as db:
+        try:
+            cursor = db.cursor()
+            cursor.execute('''
+                INSERT INTO project_nodes (id, project, kind, name, ref)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (node_id, project, kind, name, ref))
+            db.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
 
 
 def add_edge(from_id: str, to_id: str, kind: str, project: str) -> bool:
@@ -291,20 +280,17 @@ def add_edge(from_id: str, to_id: str, kind: str, project: str) -> bool:
         add_edge('flow.auth', 'api.login', 'implements', 'my-project')
     """
     _ensure_tables()
-    db = get_db()
-    cursor = db.cursor()
-
-    try:
-        cursor.execute('''
-            INSERT INTO project_edges (project, from_id, to_id, kind)
-            VALUES (?, ?, ?, ?)
-        ''', (project, from_id, to_id, kind))
-        db.commit()
-        db.close()
-        return True
-    except sqlite3.IntegrityError:
-        db.close()
-        return False
+    with managed_connection() as db:
+        try:
+            cursor = db.cursor()
+            cursor.execute('''
+                INSERT INTO project_edges (project, from_id, to_id, kind)
+                VALUES (?, ?, ?, ?)
+            ''', (project, from_id, to_id, kind))
+            db.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
 
 
 def get_node(node_id: str, project: str) -> Optional[Dict]:
@@ -318,27 +304,26 @@ def get_node(node_id: str, project: str) -> Optional[Dict]:
         {id, project, kind, name, ref} 或 None
     """
     _ensure_tables()
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    cursor.execute('''
-        SELECT id, project, kind, name, ref
-        FROM project_nodes
-        WHERE id = ? AND project = ?
-    ''', (node_id, project))
+        cursor.execute('''
+            SELECT id, project, kind, name, ref
+            FROM project_nodes
+            WHERE id = ? AND project = ?
+        ''', (node_id, project))
 
-    row = cursor.fetchone()
-    db.close()
+        row = cursor.fetchone()
 
-    if row:
-        return {
-            'id': row[0],
-            'project': row[1],
-            'kind': row[2],
-            'name': row[3],
-            'ref': row[4]
-        }
-    return None
+        if row:
+            return {
+                'id': row[0],
+                'project': row[1],
+                'kind': row[2],
+                'name': row[3],
+                'ref': row[4]
+            }
+        return None
 
 
 def list_nodes(project: str, kind: str = None) -> List[Dict]:
@@ -352,31 +337,30 @@ def list_nodes(project: str, kind: str = None) -> List[Dict]:
         [{id, kind, name, ref}]
     """
     _ensure_tables()
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    sql = 'SELECT id, kind, name, ref FROM project_nodes WHERE project = ?'
-    params = [project]
+        sql = 'SELECT id, kind, name, ref FROM project_nodes WHERE project = ?'
+        params = [project]
 
-    if kind:
-        sql += ' AND kind = ?'
-        params.append(kind)
+        if kind:
+            sql += ' AND kind = ?'
+            params.append(kind)
 
-    sql += ' ORDER BY kind, id'
+        sql += ' ORDER BY kind, id'
 
-    cursor.execute(sql, params)
-    results = []
+        cursor.execute(sql, params)
+        results = []
 
-    for row in cursor.fetchall():
-        results.append({
-            'id': row[0],
-            'kind': row[1],
-            'name': row[2],
-            'ref': row[3]
-        })
+        for row in cursor.fetchall():
+            results.append({
+                'id': row[0],
+                'kind': row[1],
+                'name': row[2],
+                'ref': row[3]
+            })
 
-    db.close()
-    return results
+        return results
 
 
 def get_neighbors(node_id: str, project: str = None, depth: int = 1,
@@ -395,83 +379,80 @@ def get_neighbors(node_id: str, project: str = None, depth: int = 1,
         [{id, kind, name, ref, edge_kind, distance}]
     """
     _ensure_tables()
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    visited = {node_id}
-    results = []
-    queue = deque([(node_id, 0)])  # (node_id, current_depth)
+        visited = {node_id}
+        results = []
+        queue = deque([(node_id, 0)])
 
-    while queue:
-        current_id, current_depth = queue.popleft()
+        while queue:
+            current_id, current_depth = queue.popleft()
 
-        if current_depth >= depth:
-            continue
+            if current_depth >= depth:
+                continue
 
-        # 查詢 outgoing edges (current -> neighbor)
-        if direction in ('outgoing', 'both'):
-            sql = '''
-                SELECT e.to_id, e.kind, n.kind, n.name, n.ref
-                FROM project_edges e
-                LEFT JOIN project_nodes n ON e.to_id = n.id AND e.project = n.project
-                WHERE e.from_id = ?
-            '''
-            params = [current_id]
+            if direction in ('outgoing', 'both'):
+                sql = '''
+                    SELECT e.to_id, e.kind, n.kind, n.name, n.ref
+                    FROM project_edges e
+                    LEFT JOIN project_nodes n ON e.to_id = n.id AND e.project = n.project
+                    WHERE e.from_id = ?
+                '''
+                params = [current_id]
 
-            if project:
-                sql += ' AND e.project = ?'
-                params.append(project)
+                if project:
+                    sql += ' AND e.project = ?'
+                    params.append(project)
 
-            cursor.execute(sql, params)
+                cursor.execute(sql, params)
 
-            for row in cursor.fetchall():
-                neighbor_id = row[0]
-                if neighbor_id not in visited:
-                    visited.add(neighbor_id)
-                    results.append({
-                        'id': neighbor_id,
-                        'edge_kind': row[1],
-                        'kind': row[2],
-                        'name': row[3],
-                        'ref': row[4],
-                        'distance': current_depth + 1,
-                        'direction': 'outgoing'
-                    })
-                    queue.append((neighbor_id, current_depth + 1))
+                for row in cursor.fetchall():
+                    neighbor_id = row[0]
+                    if neighbor_id not in visited:
+                        visited.add(neighbor_id)
+                        results.append({
+                            'id': neighbor_id,
+                            'edge_kind': row[1],
+                            'kind': row[2],
+                            'name': row[3],
+                            'ref': row[4],
+                            'distance': current_depth + 1,
+                            'direction': 'outgoing'
+                        })
+                        queue.append((neighbor_id, current_depth + 1))
 
-        # 查詢 incoming edges (neighbor -> current)
-        if direction in ('incoming', 'both'):
-            sql = '''
-                SELECT e.from_id, e.kind, n.kind, n.name, n.ref
-                FROM project_edges e
-                LEFT JOIN project_nodes n ON e.from_id = n.id AND e.project = n.project
-                WHERE e.to_id = ?
-            '''
-            params = [current_id]
+            if direction in ('incoming', 'both'):
+                sql = '''
+                    SELECT e.from_id, e.kind, n.kind, n.name, n.ref
+                    FROM project_edges e
+                    LEFT JOIN project_nodes n ON e.from_id = n.id AND e.project = n.project
+                    WHERE e.to_id = ?
+                '''
+                params = [current_id]
 
-            if project:
-                sql += ' AND e.project = ?'
-                params.append(project)
+                if project:
+                    sql += ' AND e.project = ?'
+                    params.append(project)
 
-            cursor.execute(sql, params)
+                cursor.execute(sql, params)
 
-            for row in cursor.fetchall():
-                neighbor_id = row[0]
-                if neighbor_id not in visited:
-                    visited.add(neighbor_id)
-                    results.append({
-                        'id': neighbor_id,
-                        'edge_kind': row[1],
-                        'kind': row[2],
-                        'name': row[3],
-                        'ref': row[4],
-                        'distance': current_depth + 1,
-                        'direction': 'incoming'
-                    })
-                    queue.append((neighbor_id, current_depth + 1))
+                for row in cursor.fetchall():
+                    neighbor_id = row[0]
+                    if neighbor_id not in visited:
+                        visited.add(neighbor_id)
+                        results.append({
+                            'id': neighbor_id,
+                            'edge_kind': row[1],
+                            'kind': row[2],
+                            'name': row[3],
+                            'ref': row[4],
+                            'distance': current_depth + 1,
+                            'direction': 'incoming'
+                        })
+                        queue.append((neighbor_id, current_depth + 1))
 
-    db.close()
-    return results
+        return results
 
 
 def get_impact(node_id: str, project: str = None) -> List[Dict]:
@@ -487,35 +468,34 @@ def get_impact(node_id: str, project: str = None) -> List[Dict]:
         [{id, kind, name, edge_kind}] - 所有指向此節點的節點
     """
     _ensure_tables()
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    sql = '''
-        SELECT e.from_id, e.kind, n.kind, n.name, n.ref
-        FROM project_edges e
-        LEFT JOIN project_nodes n ON e.from_id = n.id AND e.project = n.project
-        WHERE e.to_id = ?
-    '''
-    params = [node_id]
+        sql = '''
+            SELECT e.from_id, e.kind, n.kind, n.name, n.ref
+            FROM project_edges e
+            LEFT JOIN project_nodes n ON e.from_id = n.id AND e.project = n.project
+            WHERE e.to_id = ?
+        '''
+        params = [node_id]
 
-    if project:
-        sql += ' AND e.project = ?'
-        params.append(project)
+        if project:
+            sql += ' AND e.project = ?'
+            params.append(project)
 
-    cursor.execute(sql, params)
-    results = []
+        cursor.execute(sql, params)
+        results = []
 
-    for row in cursor.fetchall():
-        results.append({
-            'id': row[0],
-            'edge_kind': row[1],
-            'kind': row[2],
-            'name': row[3],
-            'ref': row[4]
-        })
+        for row in cursor.fetchall():
+            results.append({
+                'id': row[0],
+                'edge_kind': row[1],
+                'kind': row[2],
+                'name': row[3],
+                'ref': row[4]
+            })
 
-    db.close()
-    return results
+        return results
 
 
 def sync_from_index(project: str, index_data: Dict[str, List[Dict]]) -> Dict[str, int]:
@@ -542,17 +522,15 @@ def sync_from_index(project: str, index_data: Dict[str, List[Dict]]) -> Dict[str
     nodes_added = 0
     edges_added = 0
 
-    # 動態處理所有類型：collection_name (複數) -> kind (單數)
-    # 例如: 'flows' -> 'flow', 'apis' -> 'api', 'commands' -> 'command'
     def pluralize_to_kind(collection_name: str) -> str:
         """將複數形式轉為單數 kind"""
         if collection_name.endswith('ies'):
-            return collection_name[:-3] + 'y'  # e.g. 'categories' -> 'category'
+            return collection_name[:-3] + 'y'
         elif collection_name.endswith('s'):
-            return collection_name[:-1]  # e.g. 'flows' -> 'flow'
+            return collection_name[:-1]
         return collection_name
 
-    # 1. 創建所有節點（動態處理任何類型）
+    # 1. 創建所有節點
     for collection_name, items in index_data.items():
         if not isinstance(items, list):
             continue
@@ -565,13 +543,12 @@ def sync_from_index(project: str, index_data: Dict[str, List[Dict]]) -> Dict[str
 
             node_id = item.get('id')
             name = item.get('name', node_id)
-            # 支援多種 ref 字段名稱
             ref = item.get('ref') or item.get('spec') or item.get('file') or item.get('path')
 
             if node_id and add_node(node_id, project, kind, name, ref):
                 nodes_added += 1
 
-    # 2. 動態創建邊（從任何有 flow/domain/covers 等關聯的節點）
+    # 2. 動態創建邊
     for collection_name, items in index_data.items():
         if not isinstance(items, list):
             continue
@@ -584,27 +561,22 @@ def sync_from_index(project: str, index_data: Dict[str, List[Dict]]) -> Dict[str
             if not item_id:
                 continue
 
-            # flow 關聯 -> implements 邊
             flow_id = item.get('flow')
             if flow_id:
-                # add_edge(from_id, to_id, kind, project)
                 if add_edge(flow_id, item_id, 'implements', project):
                     edges_added += 1
 
-            # domain 關聯 -> uses 邊
             domain_id = item.get('domain')
             if domain_id:
                 if add_edge(item_id, domain_id, 'uses', project):
                     edges_added += 1
 
-            # covers 關聯 -> covers 邊
             covers = item.get('covers', [])
             if isinstance(covers, list):
                 for covered_id in covers:
                     if add_edge(item_id, covered_id, 'covers', project):
                         edges_added += 1
 
-            # depends 關聯 -> depends 邊
             depends = item.get('depends', [])
             if isinstance(depends, list):
                 for dep_id in depends:
@@ -628,25 +600,22 @@ def delete_node(node_id: str, project: str) -> bool:
         True if deleted, False if not found
     """
     _ensure_tables()
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    # 先刪除相關邊
-    cursor.execute('''
-        DELETE FROM project_edges
-        WHERE project = ? AND (from_id = ? OR to_id = ?)
-    ''', (project, node_id, node_id))
+        cursor.execute('''
+            DELETE FROM project_edges
+            WHERE project = ? AND (from_id = ? OR to_id = ?)
+        ''', (project, node_id, node_id))
 
-    # 再刪除節點
-    cursor.execute('''
-        DELETE FROM project_nodes
-        WHERE id = ? AND project = ?
-    ''', (node_id, project))
+        cursor.execute('''
+            DELETE FROM project_nodes
+            WHERE id = ? AND project = ?
+        ''', (node_id, project))
 
-    deleted = cursor.rowcount > 0
-    db.commit()
-    db.close()
-    return deleted
+        deleted = cursor.rowcount > 0
+        db.commit()
+        return deleted
 
 
 def delete_edge(project: str, from_id: str, to_id: str, kind: str) -> bool:
@@ -662,18 +631,17 @@ def delete_edge(project: str, from_id: str, to_id: str, kind: str) -> bool:
         True if deleted, False if not found
     """
     _ensure_tables()
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    cursor.execute('''
-        DELETE FROM project_edges
-        WHERE project = ? AND from_id = ? AND to_id = ? AND kind = ?
-    ''', (project, from_id, to_id, kind))
+        cursor.execute('''
+            DELETE FROM project_edges
+            WHERE project = ? AND from_id = ? AND to_id = ? AND kind = ?
+        ''', (project, from_id, to_id, kind))
 
-    deleted = cursor.rowcount > 0
-    db.commit()
-    db.close()
-    return deleted
+        deleted = cursor.rowcount > 0
+        db.commit()
+        return deleted
 
 
 def get_graph_stats(project: str) -> Dict[str, Any]:
@@ -691,24 +659,20 @@ def get_graph_stats(project: str) -> Dict[str, Any]:
         }
     """
     _ensure_tables()
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    # 節點統計
-    cursor.execute('''
-        SELECT kind, COUNT(*) FROM project_nodes
-        WHERE project = ? GROUP BY kind
-    ''', (project,))
-    nodes_by_kind = dict(cursor.fetchall())
+        cursor.execute('''
+            SELECT kind, COUNT(*) FROM project_nodes
+            WHERE project = ? GROUP BY kind
+        ''', (project,))
+        nodes_by_kind = dict(cursor.fetchall())
 
-    # 邊統計
-    cursor.execute('''
-        SELECT kind, COUNT(*) FROM project_edges
-        WHERE project = ? GROUP BY kind
-    ''', (project,))
-    edges_by_kind = dict(cursor.fetchall())
-
-    db.close()
+        cursor.execute('''
+            SELECT kind, COUNT(*) FROM project_edges
+            WHERE project = ? GROUP BY kind
+        ''', (project,))
+        edges_by_kind = dict(cursor.fetchall())
 
     return {
         'node_count': sum(nodes_by_kind.values()),
@@ -724,27 +688,26 @@ def get_graph_stats(project: str) -> Dict[str, Any]:
 
 def _ensure_access_table():
     """確保 task_node_access 表存在"""
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS task_node_access (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project TEXT NOT NULL,
-            task_id TEXT,
-            node_id TEXT NOT NULL,
-            agent TEXT NOT NULL,
-            access_type TEXT DEFAULT 'read',
-            accessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS task_node_access (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project TEXT NOT NULL,
+                task_id TEXT,
+                node_id TEXT NOT NULL,
+                agent TEXT NOT NULL,
+                access_type TEXT DEFAULT 'read',
+                accessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
 
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_node_access_project ON task_node_access(project)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_node_access_node ON task_node_access(node_id)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_node_access_time ON task_node_access(accessed_at)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_node_access_project ON task_node_access(project)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_node_access_node ON task_node_access(node_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_node_access_time ON task_node_access(accessed_at)')
 
-    db.commit()
-    db.close()
+        db.commit()
 
 
 def record_node_access(project: str, node_id: str, agent: str,
@@ -762,18 +725,17 @@ def record_node_access(project: str, node_id: str, agent: str,
         記錄 ID
     """
     _ensure_access_table()
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    cursor.execute('''
-        INSERT INTO task_node_access (project, task_id, node_id, agent, access_type)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (project, task_id, node_id, agent, access_type))
+        cursor.execute('''
+            INSERT INTO task_node_access (project, task_id, node_id, agent, access_type)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (project, task_id, node_id, agent, access_type))
 
-    record_id = cursor.lastrowid
-    db.commit()
-    db.close()
-    return record_id
+        record_id = cursor.lastrowid
+        db.commit()
+        return record_id
 
 
 def get_hot_nodes(project: str, limit: int = 10, days: int = None) -> List[Dict]:
@@ -789,43 +751,42 @@ def get_hot_nodes(project: str, limit: int = 10, days: int = None) -> List[Dict]
     """
     _ensure_access_table()
     _ensure_tables()
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    sql = '''
-        SELECT a.node_id, COUNT(*) as access_count, MAX(a.accessed_at) as last_accessed,
-               n.kind, n.name
-        FROM task_node_access a
-        LEFT JOIN project_nodes n ON a.node_id = n.id AND a.project = n.project
-        WHERE a.project = ?
-    '''
-    params = [project]
+        sql = '''
+            SELECT a.node_id, COUNT(*) as access_count, MAX(a.accessed_at) as last_accessed,
+                   n.kind, n.name
+            FROM task_node_access a
+            LEFT JOIN project_nodes n ON a.node_id = n.id AND a.project = n.project
+            WHERE a.project = ?
+        '''
+        params = [project]
 
-    if days:
-        sql += " AND a.accessed_at >= datetime('now', ?)"
-        params.append(f'-{days} days')
+        if days:
+            sql += " AND a.accessed_at >= datetime('now', ?)"
+            params.append(f'-{days} days')
 
-    sql += '''
-        GROUP BY a.node_id
-        ORDER BY access_count DESC
-        LIMIT ?
-    '''
-    params.append(limit)
+        sql += '''
+            GROUP BY a.node_id
+            ORDER BY access_count DESC
+            LIMIT ?
+        '''
+        params.append(limit)
 
-    cursor.execute(sql, params)
-    results = []
+        cursor.execute(sql, params)
+        results = []
 
-    for row in cursor.fetchall():
-        results.append({
-            'node_id': row[0],
-            'access_count': row[1],
-            'last_accessed': row[2],
-            'kind': row[3],
-            'name': row[4]
-        })
+        for row in cursor.fetchall():
+            results.append({
+                'node_id': row[0],
+                'access_count': row[1],
+                'last_accessed': row[2],
+                'kind': row[3],
+                'name': row[4]
+            })
 
-    db.close()
-    return results
+        return results
 
 
 def get_cold_nodes(project: str, days: int = 30) -> List[Dict]:
@@ -840,36 +801,34 @@ def get_cold_nodes(project: str, days: int = 30) -> List[Dict]:
     """
     _ensure_access_table()
     _ensure_tables()
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    # 找出所有節點及其最後訪問時間
-    cursor.execute('''
-        SELECT n.id, n.kind, n.name,
-               MAX(a.accessed_at) as last_accessed,
-               CAST(julianday('now') - julianday(MAX(a.accessed_at)) AS INTEGER) as days_since
-        FROM project_nodes n
-        LEFT JOIN task_node_access a ON n.id = a.node_id AND n.project = a.project
-        WHERE n.project = ?
-        GROUP BY n.id
-        HAVING last_accessed IS NULL
-           OR julianday('now') - julianday(MAX(a.accessed_at)) > ?
-        ORDER BY last_accessed ASC NULLS FIRST
-    ''', (project, days))
+        cursor.execute('''
+            SELECT n.id, n.kind, n.name,
+                   MAX(a.accessed_at) as last_accessed,
+                   CAST(julianday('now') - julianday(MAX(a.accessed_at)) AS INTEGER) as days_since
+            FROM project_nodes n
+            LEFT JOIN task_node_access a ON n.id = a.node_id AND n.project = a.project
+            WHERE n.project = ?
+            GROUP BY n.id
+            HAVING last_accessed IS NULL
+               OR julianday('now') - julianday(MAX(a.accessed_at)) > ?
+            ORDER BY last_accessed ASC NULLS FIRST
+        ''', (project, days))
 
-    results = []
+        results = []
 
-    for row in cursor.fetchall():
-        results.append({
-            'node_id': row[0],
-            'kind': row[1],
-            'name': row[2],
-            'last_accessed': row[3],
-            'days_since_access': row[4] if row[4] else 'never'
-        })
+        for row in cursor.fetchall():
+            results.append({
+                'node_id': row[0],
+                'kind': row[1],
+                'name': row[2],
+                'last_accessed': row[3],
+                'days_since_access': row[4] if row[4] else 'never'
+            })
 
-    db.close()
-    return results
+        return results
 
 
 def get_access_history(project: str, node_id: str = None, limit: int = 50) -> List[Dict]:
@@ -884,38 +843,37 @@ def get_access_history(project: str, node_id: str = None, limit: int = 50) -> Li
         [{id, node_id, agent, task_id, access_type, accessed_at}]
     """
     _ensure_access_table()
-    db = get_db()
-    cursor = db.cursor()
+    with managed_connection() as db:
+        cursor = db.cursor()
 
-    sql = '''
-        SELECT id, node_id, agent, task_id, access_type, accessed_at
-        FROM task_node_access
-        WHERE project = ?
-    '''
-    params = [project]
+        sql = '''
+            SELECT id, node_id, agent, task_id, access_type, accessed_at
+            FROM task_node_access
+            WHERE project = ?
+        '''
+        params = [project]
 
-    if node_id:
-        sql += ' AND node_id = ?'
-        params.append(node_id)
+        if node_id:
+            sql += ' AND node_id = ?'
+            params.append(node_id)
 
-    sql += ' ORDER BY accessed_at DESC LIMIT ?'
-    params.append(limit)
+        sql += ' ORDER BY accessed_at DESC LIMIT ?'
+        params.append(limit)
 
-    cursor.execute(sql, params)
-    results = []
+        cursor.execute(sql, params)
+        results = []
 
-    for row in cursor.fetchall():
-        results.append({
-            'id': row[0],
-            'node_id': row[1],
-            'agent': row[2],
-            'task_id': row[3],
-            'access_type': row[4],
-            'accessed_at': row[5]
-        })
+        for row in cursor.fetchall():
+            results.append({
+                'id': row[0],
+                'node_id': row[1],
+                'agent': row[2],
+                'task_id': row[3],
+                'access_type': row[4],
+                'accessed_at': row[5]
+            })
 
-    db.close()
-    return results
+        return results
 
 
 # =============================================================================
@@ -926,7 +884,6 @@ if __name__ == "__main__":
     print(SCHEMA)
     print("\n" + "=" * 50 + "\n")
 
-    # 測試基本功能
     test_project = "_test_graph_"
 
     print("=== Testing add_node() ===")
@@ -956,7 +913,6 @@ if __name__ == "__main__":
     stats = get_graph_stats(test_project)
     print(f"Stats: {stats}")
 
-    # 清理測試數據
     print("\n=== Cleaning up ===")
     delete_node('flow.auth', test_project)
     delete_node('domain.user', test_project)

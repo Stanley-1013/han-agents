@@ -21,6 +21,12 @@ CREATE TABLE IF NOT EXISTS tasks (
     requires_validation INTEGER DEFAULT 1,  -- 0=不需要, 1=需要驗證
     validation_status TEXT,  -- pending, approved, rejected, skipped
     validator_task_id TEXT,  -- 關聯的 critic 驗證任務 ID
+    -- Hierarchy 欄位（Epic → Story → Task → Bug）
+    task_level TEXT,         -- epic | story | task | bug
+    epic_id TEXT,            -- 所屬 Epic ID
+    story_id TEXT,           -- 所屬 Story ID
+    executor_agent_id TEXT,  -- 執行者 agent id（resume 用）
+    rejection_count INTEGER DEFAULT 0,
     -- Branch 關聯（Story 4: PFC Branch 選擇機制）
     metadata TEXT,  -- JSON: {"branch": {"flow_id": "flow.auth", "domain_ids": ["domain.user"]}}
     -- 時間戳記
@@ -122,6 +128,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project);
 CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent_status ON tasks(parent_id, status);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent_status_priority ON tasks(parent_id, status, priority DESC);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent_agent_status ON tasks(parent_id, assigned_agent, status);
+CREATE INDEX IF NOT EXISTS idx_tasks_epic ON tasks(epic_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_story ON tasks(story_id);
 CREATE INDEX IF NOT EXISTS idx_working_memory_task ON working_memory(task_id);
 CREATE INDEX IF NOT EXISTS idx_working_memory_key ON working_memory(key);
 CREATE INDEX IF NOT EXISTS idx_long_term_category ON long_term_memory(category);
@@ -130,6 +141,11 @@ CREATE INDEX IF NOT EXISTS idx_episodes_project ON episodes(project);
 -- Branch 索引（Story 2: Memory 查詢增強）
 CREATE INDEX IF NOT EXISTS idx_ltm_branch_flow ON long_term_memory(branch_flow);
 CREATE INDEX IF NOT EXISTS idx_ltm_branch_domain ON long_term_memory(branch_domain);
+
+-- 複合索引（常用查詢加速）
+CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project, status);
+CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at);
+CREATE INDEX IF NOT EXISTS idx_ltm_category_project ON long_term_memory(category, project);
 
 -- =============================================================================
 -- Graph Overlay（Story 3: 輕量圖結構）
