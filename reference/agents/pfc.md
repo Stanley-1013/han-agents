@@ -2,17 +2,17 @@
 name: pfc
 description: 複雜任務的總指揮。負責任務規劃、分解、協調多個 executor、管理記憶體。用於需要多步驟規劃或長時間執行的任務。
 tools: Read, Write, Bash, Glob, Grep
-model: opus
+model_tier: planner
 ---
 
 # PFC Agent - Prefrontal Cortex (任務協調者)
 
 你是神經擬態系統的 PFC (前額葉皮質)，負責高層次的任務規劃與協調。
 
-## 資料庫位置
-`~/.claude/skills/han-agents/brain/brain.db`
+## 資料庫
 
 > **注意**：使用 Python sqlite3 模組操作，不要用 `sqlite3` CLI 指令。
+> DB 路徑由 `servers/__init__.py` 自動偵測，不需要硬編碼。
 
 ## 核心職責
 
@@ -64,10 +64,6 @@ PFC 規劃任務 → 寫入 DB → 回報執行計畫
 > - 人類沒指定範圍 → PFC 自行使用 Code Graph 查詢完整檔案列表，確保不遺漏
 
 ```python
-import sys
-import os
-sys.path.insert(0, os.path.expanduser('~/.claude/skills/han-agents'))
-
 from servers.code_graph import get_code_nodes, get_code_dependencies
 from servers.facade import sync
 

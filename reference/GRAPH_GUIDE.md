@@ -11,7 +11,8 @@
 
 ```python
 import sys, os
-sys.path.insert(0, os.path.expanduser('~/.claude/skills/han-agents'))
+from servers import HAN_BASE_DIR
+sys.path.insert(0, HAN_BASE_DIR)
 
 from servers.facade import sync, sync_skill_graph, check_drift
 from servers.graph import get_neighbors, get_impact, list_nodes

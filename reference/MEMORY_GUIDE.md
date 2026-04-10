@@ -6,7 +6,8 @@
 
 ```python
 import sys, os
-sys.path.insert(0, os.path.expanduser('~/.claude/skills/han-agents'))
+from servers import HAN_BASE_DIR
+sys.path.insert(0, HAN_BASE_DIR)
 
 from servers.memory import (
     # Search

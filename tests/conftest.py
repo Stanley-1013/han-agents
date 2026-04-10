@@ -67,24 +67,27 @@ def mock_db_path(test_db, monkeypatch):
     """
     monkeypatch.setenv('HAN_DB_PATH', test_db)
 
-    # Patch 各模組的 DB 路徑（注意不同模組用不同變數名）
-    import servers.graph as graph_mod
-    import servers.memory as memory_mod
-    import servers.tasks as tasks_mod
-    import servers.code_graph as code_graph_mod
+    import servers as servers_init
     import servers.registry as registry_mod
 
-    # graph, memory, tasks 使用 BRAIN_DB
-    monkeypatch.setattr(graph_mod, 'BRAIN_DB', test_db)
-    monkeypatch.setattr(memory_mod, 'BRAIN_DB', test_db)
-    monkeypatch.setattr(tasks_mod, 'BRAIN_DB', test_db)
-
-    # code_graph, registry 使用 DB_PATH
-    monkeypatch.setattr(code_graph_mod, 'DB_PATH', test_db)
-    monkeypatch.setattr(registry_mod, 'DB_PATH', test_db)
+    # Patch 核心模組的 DB 路徑（ensure_db / managed_connection 讀這個）
+    monkeypatch.setattr(servers_init, 'BRAIN_DB', test_db)
+    # 重置 lazy init flag，讓 ensure_db() 重新檢查
+    monkeypatch.setattr(servers_init, '_db_initialized', False)
 
     # 初始化 registry
     registry_mod.init_registry()
+
+    # 重新執行 tasks.py 的欄位遷移（這些欄位不在 schema.sql 中）
+    from servers.tasks import _ensure_columns
+    _ensure_columns('tasks', {
+        'metadata': 'TEXT',
+        'executor_agent_id': 'TEXT',
+        'rejection_count': 'INTEGER DEFAULT 0',
+        'task_level': 'TEXT',
+        'epic_id': 'TEXT',
+        'story_id': 'TEXT',
+    })
 
     return test_db
 

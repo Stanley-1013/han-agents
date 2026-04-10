@@ -154,15 +154,12 @@ DEFAULT_EDGE_KINDS: List[Tuple[str, str, str, Optional[str], Optional[str], int]
 # Database Connection
 # =============================================================================
 
-# 動態計算資料庫路徑（相對於此模組位置）
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH = os.path.join(_BASE_DIR, 'brain', 'brain.db')
+from servers import managed_connection
 
-def get_db() -> sqlite3.Connection:
-    """取得資料庫連線"""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+
+def _get_conn():
+    """Module-level connection context manager with Row factory."""
+    return managed_connection(row_factory=True)
 
 # =============================================================================
 # Node Kind API
@@ -170,17 +167,13 @@ def get_db() -> sqlite3.Connection:
 
 def get_valid_node_kinds() -> List[str]:
     """取得所有有效的 Node 類型"""
-    conn = get_db()
-    try:
+    with _get_conn() as conn:
         cursor = conn.execute("SELECT kind FROM node_kind_registry ORDER BY kind")
         return [row['kind'] for row in cursor.fetchall()]
-    finally:
-        conn.close()
 
 def get_node_kind_info(kind: str) -> Optional[Dict]:
     """取得 Node 類型詳細資訊"""
-    conn = get_db()
-    try:
+    with _get_conn() as conn:
         cursor = conn.execute(
             "SELECT * FROM node_kind_registry WHERE kind = ?",
             (kind,)
@@ -189,19 +182,14 @@ def get_node_kind_info(kind: str) -> Optional[Dict]:
         if row:
             return dict(row)
         return None
-    finally:
-        conn.close()
 
 def get_all_node_kinds() -> List[Dict]:
     """取得所有 Node 類型的詳細資訊"""
-    conn = get_db()
-    try:
+    with _get_conn() as conn:
         cursor = conn.execute(
             "SELECT * FROM node_kind_registry ORDER BY is_builtin DESC, kind"
         )
         return [dict(row) for row in cursor.fetchall()]
-    finally:
-        conn.close()
 
 def register_node_kind(
     kind: str,
@@ -218,23 +206,20 @@ def register_node_kind(
         True: 成功新增
         False: 類型已存在
     """
-    conn = get_db()
-    try:
-        conn.execute(
-            """
-            INSERT INTO node_kind_registry
-            (kind, display_name, description, icon, color, extractor, is_builtin)
-            VALUES (?, ?, ?, ?, ?, ?, 0)
-            """,
-            (kind, display_name, description, icon, color, extractor)
-        )
-        conn.commit()
-        return True
-    except sqlite3.IntegrityError:
-        # 類型已存在
-        return False
-    finally:
-        conn.close()
+    with _get_conn() as conn:
+        try:
+            conn.execute(
+                """
+                INSERT INTO node_kind_registry
+                (kind, display_name, description, icon, color, extractor, is_builtin)
+                VALUES (?, ?, ?, ?, ?, ?, 0)
+                """,
+                (kind, display_name, description, icon, color, extractor)
+            )
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
 
 def validate_node_kind(kind: str) -> bool:
     """驗證 Node 類型是否有效"""
@@ -246,17 +231,13 @@ def validate_node_kind(kind: str) -> bool:
 
 def get_valid_edge_kinds() -> List[str]:
     """取得所有有效的 Edge 類型"""
-    conn = get_db()
-    try:
+    with _get_conn() as conn:
         cursor = conn.execute("SELECT kind FROM edge_kind_registry ORDER BY kind")
         return [row['kind'] for row in cursor.fetchall()]
-    finally:
-        conn.close()
 
 def get_edge_kind_info(kind: str) -> Optional[Dict]:
     """取得 Edge 類型詳細資訊"""
-    conn = get_db()
-    try:
+    with _get_conn() as conn:
         cursor = conn.execute(
             "SELECT * FROM edge_kind_registry WHERE kind = ?",
             (kind,)
@@ -271,13 +252,10 @@ def get_edge_kind_info(kind: str) -> Optional[Dict]:
                 result['target_kinds'] = json.loads(result['target_kinds'])
             return result
         return None
-    finally:
-        conn.close()
 
 def get_all_edge_kinds() -> List[Dict]:
     """取得所有 Edge 類型的詳細資訊"""
-    conn = get_db()
-    try:
+    with _get_conn() as conn:
         cursor = conn.execute(
             "SELECT * FROM edge_kind_registry ORDER BY is_builtin DESC, kind"
         )
@@ -290,8 +268,6 @@ def get_all_edge_kinds() -> List[Dict]:
                 result['target_kinds'] = json.loads(result['target_kinds'])
             results.append(result)
         return results
-    finally:
-        conn.close()
 
 def register_edge_kind(
     kind: str,
@@ -316,25 +292,23 @@ def register_edge_kind(
         True: 成功新增
         False: 類型已存在
     """
-    conn = get_db()
-    try:
-        source_json = json.dumps(source_kinds) if source_kinds else None
-        target_json = json.dumps(target_kinds) if target_kinds else None
+    with _get_conn() as conn:
+        try:
+            source_json = json.dumps(source_kinds) if source_kinds else None
+            target_json = json.dumps(target_kinds) if target_kinds else None
 
-        conn.execute(
-            """
-            INSERT INTO edge_kind_registry
-            (kind, display_name, description, source_kinds, target_kinds, is_directional, is_builtin)
-            VALUES (?, ?, ?, ?, ?, ?, 0)
-            """,
-            (kind, display_name, description, source_json, target_json, 1 if is_directional else 0)
-        )
-        conn.commit()
-        return True
-    except sqlite3.IntegrityError:
-        return False
-    finally:
-        conn.close()
+            conn.execute(
+                """
+                INSERT INTO edge_kind_registry
+                (kind, display_name, description, source_kinds, target_kinds, is_directional, is_builtin)
+                VALUES (?, ?, ?, ?, ?, ?, 0)
+                """,
+                (kind, display_name, description, source_json, target_json, 1 if is_directional else 0)
+            )
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
 
 def validate_edge_kind(
     kind: str,
@@ -380,11 +354,10 @@ def init_default_types() -> Tuple[int, int]:
     Returns:
         (node_count, edge_count): 新增的類型數量
     """
-    conn = get_db()
-    node_count = 0
-    edge_count = 0
+    with _get_conn() as conn:
+        node_count = 0
+        edge_count = 0
 
-    try:
         # 初始化 Node 類型
         for kind, display_name, description, icon, color, extractor in DEFAULT_NODE_KINDS:
             try:
@@ -398,7 +371,7 @@ def init_default_types() -> Tuple[int, int]:
                 )
                 node_count += 1
             except sqlite3.IntegrityError:
-                pass  # 已存在，跳過
+                pass
 
         # 初始化 Edge 類型
         for kind, display_name, description, source_kinds, target_kinds, is_dir in DEFAULT_EDGE_KINDS:
@@ -413,28 +386,24 @@ def init_default_types() -> Tuple[int, int]:
                 )
                 edge_count += 1
             except sqlite3.IntegrityError:
-                pass  # 已存在，跳過
+                pass
 
         conn.commit()
         return (node_count, edge_count)
-    finally:
-        conn.close()
 
 def ensure_schema_exists():
     """確保 Schema 存在（讀取 schema.sql 並執行）"""
-    schema_path = os.path.join(_BASE_DIR, 'brain', 'schema.sql')
+    from servers import HAN_BASE_DIR
+    schema_path = os.path.join(HAN_BASE_DIR, 'brain', 'schema.sql')
 
     if not os.path.exists(schema_path):
         raise FileNotFoundError(f"Schema file not found: {schema_path}")
 
-    conn = get_db()
-    try:
+    with _get_conn() as conn:
         with open(schema_path, 'r', encoding='utf-8') as f:
             schema_sql = f.read()
         conn.executescript(schema_sql)
         conn.commit()
-    finally:
-        conn.close()
 
 def init_registry():
     """
@@ -471,52 +440,50 @@ def diagnose() -> Dict:
     }
 
     try:
-        conn = get_db()
+        with _get_conn() as conn:
+            # 檢查表是否存在
+            cursor = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('node_kind_registry', 'edge_kind_registry')"
+            )
+            tables = [row['name'] for row in cursor.fetchall()]
 
-        # 檢查表是否存在
-        cursor = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('node_kind_registry', 'edge_kind_registry')"
-        )
-        tables = [row['name'] for row in cursor.fetchall()]
+            if 'node_kind_registry' not in tables:
+                result['status'] = 'error'
+                result['messages'].append('node_kind_registry table does not exist')
 
-        if 'node_kind_registry' not in tables:
-            result['status'] = 'error'
-            result['messages'].append('node_kind_registry table does not exist')
+            if 'edge_kind_registry' not in tables:
+                result['status'] = 'error'
+                result['messages'].append('edge_kind_registry table does not exist')
 
-        if 'edge_kind_registry' not in tables:
-            result['status'] = 'error'
-            result['messages'].append('edge_kind_registry table does not exist')
+            if result['status'] == 'error':
+                return result
 
-        if result['status'] == 'error':
+            # 統計數量
+            cursor = conn.execute("SELECT COUNT(*) as cnt, SUM(is_builtin) as builtin FROM node_kind_registry")
+            row = cursor.fetchone()
+            result['node_kinds_count'] = row['cnt']
+            result['builtin_node_kinds'] = row['builtin'] or 0
+            result['custom_node_kinds'] = row['cnt'] - (row['builtin'] or 0)
+
+            cursor = conn.execute("SELECT COUNT(*) as cnt, SUM(is_builtin) as builtin FROM edge_kind_registry")
+            row = cursor.fetchone()
+            result['edge_kinds_count'] = row['cnt']
+            result['builtin_edge_kinds'] = row['builtin'] or 0
+            result['custom_edge_kinds'] = row['cnt'] - (row['builtin'] or 0)
+
+            # 檢查是否有預設類型
+            if result['node_kinds_count'] == 0:
+                result['status'] = 'warning'
+                result['messages'].append('No node kinds registered. Run init_default_types().')
+
+            if result['edge_kinds_count'] == 0:
+                result['status'] = 'warning'
+                result['messages'].append('No edge kinds registered. Run init_default_types().')
+
+            if result['status'] == 'ok':
+                result['messages'].append('Registry is properly configured.')
+
             return result
-
-        # 統計數量
-        cursor = conn.execute("SELECT COUNT(*) as cnt, SUM(is_builtin) as builtin FROM node_kind_registry")
-        row = cursor.fetchone()
-        result['node_kinds_count'] = row['cnt']
-        result['builtin_node_kinds'] = row['builtin'] or 0
-        result['custom_node_kinds'] = row['cnt'] - (row['builtin'] or 0)
-
-        cursor = conn.execute("SELECT COUNT(*) as cnt, SUM(is_builtin) as builtin FROM edge_kind_registry")
-        row = cursor.fetchone()
-        result['edge_kinds_count'] = row['cnt']
-        result['builtin_edge_kinds'] = row['builtin'] or 0
-        result['custom_edge_kinds'] = row['cnt'] - (row['builtin'] or 0)
-
-        # 檢查是否有預設類型
-        if result['node_kinds_count'] == 0:
-            result['status'] = 'warning'
-            result['messages'].append('No node kinds registered. Run init_default_types().')
-
-        if result['edge_kinds_count'] == 0:
-            result['status'] = 'warning'
-            result['messages'].append('No edge kinds registered. Run init_default_types().')
-
-        if result['status'] == 'ok':
-            result['messages'].append('Registry is properly configured.')
-
-        conn.close()
-        return result
 
     except Exception as e:
         return {

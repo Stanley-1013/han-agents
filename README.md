@@ -197,65 +197,54 @@ Install options:
 ### Verify Installation
 
 ```bash
-# Adjust path based on your platform's skills directory
-python ~/.claude/skills/han-agents/scripts/doctor.py
+# Run from inside the cloned han-agents directory
+cd <path-to-han-agents>
+python scripts/doctor.py
 ```
 
 ## Features
 
+- **Automated Dispatch Loop**: `get_next_dispatch()` auto-orchestrates Executor → Critic → Memory pipeline
+- **Recipe System**: Pre-built workflows (e.g. `recipe_unit_tests()`) that auto-generate task trees
 - **Task Lifecycle Management**: Create, execute, validate, and document tasks with multiple agents
-- **Hierarchical Tasks**: Jira-like task structure (Epic → Story → Task → Bug) for complex projects
+- **Hierarchical Tasks**: Jira-like task structure (Epic → Story → Task → Bug) with auto-inherited hierarchy
 - **Code Graph**: AST-based code analysis for TypeScript, Python, Go, Java, and Rust
   - Java: Extracts `@Autowired`, `@Inject`, `@MockBean` as `injects` edges (implicit dependencies)
   - BFS dependency traversal for precise Unit Test context collection
 - **Drift Detection**: Compare Skill definitions against actual code implementation
 - **Semantic Memory**: FTS5 + embedding-based search with LLM reranking
+- **Auto Tech Stack Detection**: `ensure_project()` auto-detects languages, frameworks, and test tools from Code Graph
 - **Micro-Nap Checkpoints**: Save/resume long-running tasks across conversations
 
 ## Quick Start
 
 ```python
 import sys, os
-sys.path.insert(0, os.path.expanduser('~/.claude/skills/han-agents'))
+from servers import HAN_BASE_DIR
+sys.path.insert(0, HAN_BASE_DIR)
 
-from servers.facade import sync, status, check_drift
-from servers.tasks import create_task, create_subtask
+from servers.facade import sync, status, check_drift, get_next_dispatch
+from servers.tasks import create_task, create_subtask, get_task_progress
+from servers.recipes import recipe_unit_tests, run_recipe
 from servers.memory import search_memory_semantic, store_memory
+from servers.project import ensure_project
 ```
 
 ## Project Setup
 
-Initialize a project Skill (auto-detects platform from han-agents install location):
+Initialize a project (syncs Code Graph + detects tech stack, stores in DB):
 
-```bash
-# Run from your skills directory
-python <skills-path>/han-agents/scripts/init_project.py <project-name> [project-dir]
-
-# Examples:
-# Claude Code
-python ~/.claude/skills/han-agents/scripts/init_project.py my-project /path/to/project
-
-# Cursor
-python ~/.cursor/skills/han-agents/scripts/init_project.py my-project /path/to/project
-
-# Windsurf (project-level)
-python .windsurf/skills/han-agents/scripts/init_project.py my-project .
-
-# Override platform (optional)
-python ~/.claude/skills/han-agents/scripts/init_project.py my-project . --platform cursor
+```python
+from servers.project import ensure_project
+result = ensure_project('my-project', '/path/to/project')
+# result['tech_stack'] → {'primary_language': 'python', 'test_tool': 'pytest', ...}
 ```
 
-This creates `<project>/.<platform>/skills/<project-name>/SKILL.md`:
+Or via CLI:
 
-| Platform | Project Skill Location |
-|----------|------------------------|
-| Claude Code | `.claude/skills/<name>/SKILL.md` |
-| Cursor | `.cursor/skills/<name>/SKILL.md` |
-| Windsurf | `.windsurf/skills/<name>/SKILL.md` |
-| Cline | `.cline/skills/<name>/SKILL.md` |
-| Codex CLI | `.codex/skills/<name>/SKILL.md` |
-| Gemini CLI | `.gemini/skills/<name>/SKILL.md` |
-| Antigravity | `.agent/skills/<name>/SKILL.md` |
+```bash
+python <han-agents>/scripts/init_project.py my-project /path/to/project
+```
 
 ## Architecture
 
@@ -274,14 +263,16 @@ This creates `<project>/.<platform>/skills/<project-name>/SKILL.md`:
 
 ## Agents
 
-| Agent | Type | Purpose |
-|-------|------|---------|
-| PFC | `pfc` | Planning and task decomposition |
-| Executor | `executor` | Task execution |
-| Critic | `critic` | Validation and quality checks |
-| Memory | `memory` | Knowledge storage and retrieval |
-| Researcher | `researcher` | Information gathering |
-| Drift Detector | `drift-detector` | Skill-Code drift detection |
+| Agent | Type | Model Tier | Purpose |
+|-------|------|------------|---------|
+| PFC | `pfc` | `planner` | Planning and task decomposition |
+| Executor | `executor` | `worker` | Task execution |
+| Critic | `critic` | `worker` | Validation and quality checks |
+| Memory | `memory` | `fast` | Knowledge storage and retrieval |
+| Researcher | `researcher` | `worker` | Information gathering |
+| Drift Detector | `drift-detector` | `fast` | Skill-Code drift detection |
+
+> **Model Tier**: Semantic capability levels — `planner` (strongest reasoning), `worker` (balanced), `fast` (low-cost). Each platform maps tiers to its own models.
 
 ## Key APIs
 
@@ -294,6 +285,16 @@ from servers.facade import (
     check_drift,       # Skill vs Code drift
     get_full_context,  # Three-layer context
     finish_task,       # Complete task lifecycle
+    get_next_dispatch, # Auto-dispatch next agent (dispatch loop)
+)
+```
+
+### Recipes (Automated Workflows)
+
+```python
+from servers.recipes import (
+    recipe_unit_tests, # Auto-generate unit test task tree
+    run_recipe,        # Run recipe by name
 )
 ```
 
@@ -302,11 +303,20 @@ from servers.facade import (
 ```python
 from servers.tasks import (
     create_task,           # Create task (supports task_level: epic/story/task/bug)
-    create_subtask,        # Create child task with dependencies
+    create_subtask,        # Create child task (auto-inherits hierarchy)
+    reserve_critic_task,   # Atomic critic reservation (idempotent)
     get_task_progress,     # Get completion stats
     get_epic_tasks,        # Get epics with nested stories
     get_story_tasks,       # Get tasks under a story
     get_hierarchy_summary, # Count by level {epics, stories, tasks, bugs}
+)
+```
+
+### Project
+
+```python
+from servers.project import (
+    ensure_project,    # Auto-init: sync Code Graph + detect tech stack + store DB
 )
 ```
 
@@ -331,6 +341,37 @@ from servers.memory import (
 )
 ```
 
+## Automated Workflow
+
+**Recipe + Dispatch Loop** — one command to generate tasks, auto-dispatch agents:
+
+```python
+from servers.recipes import recipe_unit_tests
+from servers.facade import get_next_dispatch
+
+# 1. Recipe auto-analyzes project, builds task tree
+result = recipe_unit_tests('my-project', '/path/to/project')
+print(result['message'])  # "Created 12 test tasks across 8 files."
+
+# 2. Dispatch loop — repeat until done
+while True:
+    inst = get_next_dispatch(result['epic_id'], 'my-project', '/path/to/project')
+    if inst['action'] != 'dispatch':
+        print(inst['message'])
+        break
+    # Claude Code: dispatch via Task tool
+    Task(subagent_type=inst['subagent_type'], prompt=inst['prompt'])
+    # Other platforms: execute inst['prompt'] in context
+```
+
+**Available Recipes**: `unit_tests` (more coming)
+
+**`get_next_dispatch()` handles automatically**:
+- Executor → Critic validation loop (idempotent, no duplicate critics)
+- Rejected → retry with feedback context
+- All done → Memory agent stores lessons
+- Returns `model_tier` for platform-specific model selection
+
 ## Scripts
 
 Run from inside the han-agents directory:
@@ -347,7 +388,7 @@ python scripts/doctor.py
 # Sync Code Graph for a project
 python scripts/sync.py /path/to/project
 
-# Initialize project Skill
+# Initialize project (sync + detect tech stack)
 python scripts/init_project.py my-project /path/to/project
 ```
 
@@ -361,7 +402,7 @@ python scripts/init_project.py my-project /path/to/project
 
 ## Database
 
-SQLite database at `~/.claude/skills/han-agents/brain/brain.db`
+SQLite database at `<han-agents>/brain/brain.db` (auto-created on first use)
 
 Schema: [brain/schema.sql](brain/schema.sql)
 

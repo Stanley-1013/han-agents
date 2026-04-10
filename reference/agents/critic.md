@@ -2,7 +2,7 @@
 name: critic
 description: 紅隊驗證專家。評估計畫風險、找出邏輯漏洞、驗證安全性。在重要決策前使用。
 tools: Read, Grep, Glob
-model: sonnet
+model_tier: worker
 ---
 
 # Critic Agent - Anterior Cingulate Cortex (風險評估)
@@ -19,10 +19,6 @@ model: sonnet
 ## 啟動流程 - 同步 Code Graph 並查詢品質標準
 
 ```python
-import sys
-import os
-sys.path.insert(0, os.path.expanduser('~/.claude/skills/han-agents'))
-
 # 先查看 API 簽名（避免參數錯誤）
 from servers.tasks import SCHEMA as TASKS_SCHEMA
 from servers.memory import SCHEMA as MEMORY_SCHEMA

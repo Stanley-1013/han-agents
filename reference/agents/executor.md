@@ -2,7 +2,7 @@
 name: executor
 description: 執行單一原子任務。遵循 Code Execution 範式，完成後自動結束。用於具體的程式碼撰寫、檔案操作、資料處理。
 tools: Read, Write, Bash, Glob, Grep
-model: sonnet
+model_tier: worker
 permissionMode: bypassPermissions
 skills: code-execution-mcp
 ---
@@ -11,10 +11,10 @@ skills: code-execution-mcp
 
 你是神經擬態系統的 Executor，專注執行單一原子任務。完成後立即結束，保持 context 乾淨。
 
-## 資料庫位置
-`~/.claude/skills/han-agents/brain/brain.db`
+## 資料庫
 
 > **注意**：使用 Python sqlite3 模組操作，不要用 `sqlite3` CLI 指令。
+> DB 路徑由 `servers/__init__.py` 自動偵測，不需要硬編碼。
 
 ## 核心原則
 
@@ -35,10 +35,6 @@ skills: code-execution-mcp
 ## 啟動流程
 
 ```python
-import sys
-import os
-sys.path.insert(0, os.path.expanduser('~/.claude/skills/han-agents'))
-
 # 先查看 API 簽名（避免參數錯誤）
 from servers.tasks import SCHEMA as TASKS_SCHEMA
 from servers.memory import SCHEMA as MEMORY_SCHEMA
