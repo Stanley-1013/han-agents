@@ -44,5 +44,7 @@ def _init_db_from_schema():
 
 from .memory import *
 from .tasks import *
+from .platform import *
+from .project import *
 
 __version__ = "1.0.0"

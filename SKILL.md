@@ -13,47 +13,41 @@ allowed-tools: Read, Write, Bash, Glob, Grep, Task
 
 > **Zero-Config**: Clone 到 skills 目錄即可使用，資料庫會在首次呼叫時自動建立。
 
-## Auto-Setup (首次使用時執行，冪等可重複)
+## Auto-Setup (首次使用時執行，冪等可重複，跨平台)
 
 ```python
-import sys, os, shutil, json, glob as globmod
+import sys, os
 
-han_dir = os.path.expanduser('~/.claude/skills/han-agents')
+# 動態偵測 han-agents 位置（支援所有平台）
+han_dir = os.path.dirname(os.path.abspath('__file__'))  # SKILL.md 所在目錄
+# 若上面不正確，fallback 到常見位置
+if not os.path.exists(os.path.join(han_dir, 'servers')):
+    for candidate in [
+        os.path.expanduser('~/.claude/skills/han-agents'),
+        os.path.expanduser('~/.cursor/skills/han-agents'),
+        os.path.expanduser('~/.codeium/windsurf/skills/han-agents'),
+        os.path.expanduser('~/.cline/skills/han-agents'),
+        os.path.expanduser('~/.codex/skills/han-agents'),
+        os.path.expanduser('~/.gemini/skills/han-agents'),
+    ]:
+        if os.path.exists(os.path.join(candidate, 'servers')):
+            han_dir = candidate
+            break
+
 sys.path.insert(0, han_dir)
 
-# 1. 確保 DB 存在（lazy init from schema.sql）
-from servers import ensure_db
-ensure_db()
-
-# 2. 複製 agent 定義到 ~/.claude/agents/（如不存在）
-agents_dir = os.path.expanduser('~/.claude/agents')
-os.makedirs(agents_dir, exist_ok=True)
-for f in globmod.glob(os.path.join(han_dir, 'reference', 'agents', '*.md')):
-    dst = os.path.join(agents_dir, os.path.basename(f))
-    if not os.path.exists(dst):
-        shutil.copy2(f, dst)
-
-# 3. 註冊 PostToolUse hook（如尚未設定）
-settings_path = os.path.expanduser('~/.claude/settings.json')
-hook_cmd = f"python3 {os.path.join(han_dir, 'hooks', 'post_task.py')}"
-settings = {}
-if os.path.exists(settings_path):
-    with open(settings_path) as f:
-        settings = json.load(f)
-hooks_list = settings.setdefault('hooks', {}).setdefault('PostToolUse', [])
-if not any(h.get('matcher') == 'Task' for h in hooks_list):
-    hooks_list.append({"matcher": "Task", "hooks": [{"type": "command", "command": hook_cmd, "timeout": 30}]})
-    with open(settings_path, 'w') as f:
-        json.dump(settings, f, indent=2, ensure_ascii=False)
-
-print("HAN-Agents ready.")
+# 一鍵設定：DB + agents + hooks（自動偵測平台，跳過不支援的功能）
+from servers.platform import auto_setup
+result = auto_setup()
+print(f"HAN-Agents ready. Platform: {result['platform']}")
 ```
 
 ## Quick Start
 
 ```python
 import sys, os
-sys.path.insert(0, os.path.expanduser('~/.claude/skills/han-agents'))
+from servers import HAN_BASE_DIR
+sys.path.insert(0, HAN_BASE_DIR)
 
 from servers.facade import get_full_context, check_drift, sync, finish_task
 from servers.tasks import create_task, create_subtask, get_task_progress, get_epic_tasks, get_hierarchy_summary
@@ -61,21 +55,26 @@ from servers.memory import search_memory_semantic, store_memory, save_checkpoint
 from servers.code_graph import get_class_dependencies_bfs
 ```
 
-**DB**: `~/.claude/skills/han-agents/brain/brain.db`（首次呼叫時自動建立）
+**DB**: `<han-agents>/brain/brain.db`（首次呼叫時自動建立）
 
 ## Project Initialization
 
-初始化專案 Skill 目錄：
+專案初始化會在首次使用時自動觸發（lazy init）：
 
-```bash
-# macOS/Linux
-python ~/.claude/skills/han-agents/scripts/init_project.py <project-name> <project-path>
-
-# Windows
-python "%USERPROFILE%\.claude\skills\han-agents\scripts\init_project.py" <project-name> <project-path>
+```python
+from servers.project import ensure_project
+result = ensure_project('my-project', '/path/to/project')
+# 自動建立 <project>/<platform_skill_dir>/my-project/SKILL.md 模板
+# 自動寫入 DB 記錄
 ```
 
-建立 `<project>/.claude/skills/<project-name>/SKILL.md` 空白模板，由 LLM 填寫專案核心文檔。
+或手動執行：
+
+```bash
+python <han-agents>/scripts/init_project.py <project-name> <project-path>
+```
+
+建立專案 SKILL.md 空白模板（跨平台自動偵測目錄），由 LLM 填寫專案核心文檔。
 
 ## When to Use
 

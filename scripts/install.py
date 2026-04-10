@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-HAN System - 安裝腳本
+HAN System - 安裝腳本（Optional）
 
-功能：
-1. 檢查系統依賴
-2. 複製 agent 定義到對應平台的 agents 目錄
-3. 如果資料庫不存在，初始化資料庫
-4. 不會覆蓋現有資料庫（保護跨專案記憶）
+Zero-config 模式下不需要手動執行此腳本。
+資料庫、agents、hooks 會在首次使用時自動設定。
+
+此腳本適用於：
+- CI/CD 環境預先安裝
+- 非互動式批次設定（--skip-prompts）
+- 資料庫重置（--reset）
+- 可選的 CLAUDE.md / SSOT / Code Graph 設定
 
 支援平台：
 - Claude Code: ~/.claude/skills/, ~/.claude/agents/
@@ -16,7 +19,6 @@ HAN System - 安裝腳本
 
 import os
 import sqlite3
-import shutil
 import sys
 
 # Windows console encoding fix
@@ -24,164 +26,42 @@ if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 import json
 
+# 讓 scripts/ 能 import servers/
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _BASE_DIR)
 
-# 平台設定
-PLATFORMS = {
-    'claude': {
-        'name': 'Claude Code',
-        'skills_dir': '~/.claude/skills',
-        'agents_dir': '~/.claude/agents',
-        'supports_agents': True,
-        'supports_hooks': True,
-    },
-    'cursor': {
-        'name': 'Cursor',
-        'skills_dir': '~/.cursor/skills',  # global
-        'agents_dir': '.cursor/agents',     # workspace-level
-        'supports_agents': True,
-        'supports_hooks': False,
-    },
-    'windsurf': {
-        'name': 'Windsurf',
-        'skills_dir': '~/.codeium/windsurf/skills',
-        'supports_agents': False,
-        'supports_hooks': False,
-    },
-    'cline': {
-        'name': 'Cline',
-        'skills_dir': '~/.cline/skills',
-        'supports_agents': False,
-        'supports_hooks': False,
-    },
-    'codex': {
-        'name': 'Codex CLI',
-        'skills_dir': '~/.codex/skills',
-        'supports_agents': False,
-        'supports_hooks': False,
-    },
-    'gemini': {
-        'name': 'Gemini CLI',
-        'skills_dir': '~/.gemini/skills',
-        'supports_agents': False,
-        'supports_hooks': False,
-    },
-    'antigravity': {
-        'name': 'Antigravity',
-        'skills_dir': '~/.gemini/antigravity/skills',
-        'supports_agents': False,
-        'supports_hooks': False,
-    },
-}
+from servers import HAN_BASE_DIR, BRAIN_DB, SCHEMA_PATH, ensure_db
+from servers.platform import (
+    PLATFORMS, detect_platform, get_agents_dir,
+    setup_agents, setup_hooks, auto_setup,
+)
 
-
-def detect_platform():
-    """根據腳本位置自動偵測平台
-
-    Returns:
-        tuple: (platform_key, base_dir) 或 (None, base_dir) 如果無法識別
-    """
-    # 取得腳本所在的 han-agents 目錄
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    base_dir = os.path.dirname(script_dir)  # scripts/ 的上層
-
-    # 從路徑中偵測平台
-    normalized_path = os.path.normpath(base_dir).replace('\\', '/')
-
-    for platform_key, config in PLATFORMS.items():
-        skills_dir = os.path.normpath(os.path.expanduser(config['skills_dir'])).replace('\\', '/')
-        if normalized_path.startswith(skills_dir):
-            return platform_key, base_dir
-
-    # 檢查是否在 workspace 層級的 skills 目錄
-    # 例如 .cursor/skills/, .windsurf/skills/, .cline/skills/
-    workspace_patterns = [
-        ('.cursor/skills', 'cursor'),
-        ('.windsurf/skills', 'windsurf'),
-        ('.cline/skills', 'cline'),
-        ('.gemini/skills', 'gemini'),
-        ('.codex/skills', 'codex'),
-        ('.agent/skills', 'antigravity'),
-    ]
-    for pattern, platform_key in workspace_patterns:
-        if pattern in normalized_path:
-            return platform_key, base_dir
-
-    # 無法識別，回傳 None
-    return None, base_dir
-
-
-def get_agents_dir(platform_key, base_dir):
-    """取得對應平台的 agents 目錄
-
-    Args:
-        platform_key: 平台識別碼
-        base_dir: han-agents 所在目錄
-
-    Returns:
-        str: agents 目錄路徑，或 None 如果該平台不支援
-    """
-    if platform_key not in PLATFORMS:
-        return None
-
-    config = PLATFORMS[platform_key]
-    if not config.get('supports_agents'):
-        return None
-
-    agents_dir = config.get('agents_dir')
-    if not agents_dir:
-        return None
-
-    # 處理 workspace-level 路徑（如 .cursor/agents）
-    if agents_dir.startswith('.'):
-        # workspace-level: 從 base_dir 往上找到 workspace root
-        # base_dir 通常是 ~/.cursor/skills/han-agents 或 .cursor/skills/han-agents
-        # 需要往上 2 層到達 .cursor/
-        workspace_root = os.path.dirname(os.path.dirname(base_dir))
-        # 檢查是否是 workspace-level 安裝
-        if os.path.basename(workspace_root).startswith('.'):
-            # 往上一層是 workspace
-            workspace_root = os.path.dirname(workspace_root)
-        return os.path.join(workspace_root, agents_dir)
-    else:
-        # global-level
-        return os.path.normpath(os.path.expanduser(agents_dir))
 
 def check_dependencies(base_dir):
-    """檢查系統依賴
-
-    Args:
-        base_dir: han-agents 所在目錄，用於檢查寫入權限
-    """
+    """檢查系統依賴"""
     errors = []
     warnings = []
 
-    # 1. Python 版本檢查
     if sys.version_info < (3, 8):
         errors.append(f"Python 3.8+ 必須，目前版本: {sys.version}")
 
-    # 2. sqlite3 模組檢查（Python 內建，但確認可用）
     try:
-        import sqlite3
-        # 測試是否能建立記憶體資料庫
         conn = sqlite3.connect(':memory:')
         conn.execute('SELECT 1')
         conn.close()
     except Exception as e:
         errors.append(f"sqlite3 模組無法使用: {e}")
 
-    # 3. 目錄權限檢查 - 檢查 base_dir 的上層（skills 目錄）
     skills_dir = os.path.dirname(base_dir)
     if os.path.exists(skills_dir):
         if not os.access(skills_dir, os.W_OK):
             errors.append(f"無寫入權限: {skills_dir}")
     else:
-        # 嘗試建立
         try:
             os.makedirs(skills_dir, exist_ok=True)
         except Exception as e:
             errors.append(f"無法建立目錄 {skills_dir}: {e}")
 
-    # 回報結果
     if errors:
         print("❌ 依賴檢查失敗:")
         for e in errors:
@@ -197,22 +77,12 @@ def check_dependencies(base_dir):
     print("✅ 依賴檢查通過")
     return True
 
-def install():
-    """安裝 HAN-Agents
 
-    自動偵測安裝平台，執行對應的安裝步驟：
-    - 所有平台：初始化資料庫
-    - Claude Code / Cursor：複製 agent 定義
-    - Claude Code：設定 PostToolUse Hook
-    """
-    # 自動偵測平台和路徑
+def install():
+    """安裝 HAN-Agents（委派給 servers.platform.auto_setup）"""
     platform_key, base_dir = detect_platform()
     platform_config = PLATFORMS.get(platform_key, {})
     platform_name = platform_config.get('name', '未知平台')
-
-    brain_dir = os.path.join(base_dir, 'brain')
-    db_path = os.path.join(brain_dir, 'brain.db')
-    schema_path = os.path.join(brain_dir, 'schema.sql')
 
     print("🧠 安裝 HAN-Agents")
     print("=" * 50)
@@ -222,49 +92,24 @@ def install():
     # 0. 依賴檢查
     check_dependencies(base_dir)
 
-    # 1. 複製 agent 定義（僅支援 agents 的平台）
-    agents_dir = get_agents_dir(platform_key, base_dir)
-    if agents_dir and platform_config.get('supports_agents'):
-        os.makedirs(agents_dir, exist_ok=True)
-        print(f"✅ 確認 agents 目錄: {agents_dir}")
+    # 1. 一鍵設定（DB + agents + hooks）
+    result = auto_setup(base_dir)
 
-        # 來源：reference/agents/（新位置）或 agents/（舊位置）
-        source_agents = os.path.join(base_dir, 'reference', 'agents')
-        if not os.path.exists(source_agents):
-            source_agents = os.path.join(base_dir, 'agents')  # fallback 舊位置
-
-        if os.path.exists(source_agents):
-            installed_count = 0
-            for agent_file in os.listdir(source_agents):
-                if agent_file.endswith('.md'):
-                    src = os.path.join(source_agents, agent_file)
-                    dst = os.path.join(agents_dir, agent_file)
-                    shutil.copy2(src, dst)
-                    installed_count += 1
-            print(f"✅ 安裝 {installed_count} 個 agent 定義到 {agents_dir}")
-        else:
-            print(f"⚠️  找不到 agent 定義目錄")
+    agents_copied = result['agents_copied']
+    if agents_copied >= 0:
+        agents_dir = get_agents_dir(platform_key, base_dir)
+        print(f"✅ 安裝 {agents_copied} 個 agent 定義到 {agents_dir}")
     else:
         print(f"ℹ️  {platform_name} 不支援獨立 agents 目錄，跳過 agent 複製")
 
-    # 2. 確保 brain 目錄存在並初始化或升級資料庫
-    os.makedirs(brain_dir, exist_ok=True)
-    if os.path.exists(db_path):
-        print(f"✅ 資料庫已存在: {db_path}")
-        # 自動補齊缺失的 table（不影響現有資料）
-        upgrade_database(db_path, schema_path)
-    else:
-        init_database(db_path, schema_path)
+    print(f"✅ 資料庫已就緒: {BRAIN_DB}")
 
-    # 3. 設定 Claude Code Hook（僅 Claude Code）
-    if platform_key == 'claude' and platform_config.get('supports_hooks'):
-        claude_home = os.path.dirname(os.path.dirname(base_dir))  # ~/.claude
-        settings_path = os.path.join(claude_home, 'settings.json')
-        setup_hooks(settings_path, base_dir)
+    if result['hooks_set']:
+        print(f"✅ Claude Code Hook 設定完成")
     else:
         print(f"ℹ️  {platform_name} 不支援 Hooks，跳過 Hook 設定")
 
-    # 4. 完成
+    # 2. 完成
     print("\n" + "=" * 50)
     print("🎉 安裝完成！")
     print(f"\n平台: {platform_name}")
@@ -286,76 +131,13 @@ def install():
         print("\n使用方式:")
         print("  透過 SKILL.md 中定義的 API 呼叫各項功能")
 
-    # 回傳 base_dir 和 platform_key 供後續處理
     return base_dir, platform_key
-
-def setup_hooks(settings_path, base_dir):
-    """設定 Claude Code PostToolUse Hook"""
-    hook_command = f"python3 {os.path.join(base_dir, 'hooks', 'post_task.py')}"
-
-    # 預期的 Hook 設定
-    hook_config = {
-        "matcher": "Task",
-        "hooks": [
-            {
-                "type": "command",
-                "command": hook_command,
-                "timeout": 30
-            }
-        ]
-    }
-
-    # 讀取現有設定（如果有）
-    settings = {}
-    if os.path.exists(settings_path):
-        try:
-            with open(settings_path, 'r', encoding='utf-8') as f:
-                settings = json.load(f)
-            print(f"✅ 讀取現有 Claude 設定: {settings_path}")
-        except json.JSONDecodeError:
-            print(f"⚠️  設定檔格式錯誤，將重建: {settings_path}")
-            settings = {}
-
-    # 確保 hooks 結構存在
-    if 'hooks' not in settings:
-        settings['hooks'] = {}
-
-    if 'PostToolUse' not in settings['hooks']:
-        settings['hooks']['PostToolUse'] = []
-
-    # 檢查是否已有 Task matcher
-    existing_matchers = [h.get('matcher') for h in settings['hooks']['PostToolUse']]
-
-    if 'Task' in existing_matchers:
-        # 更新現有設定
-        for i, hook in enumerate(settings['hooks']['PostToolUse']):
-            if hook.get('matcher') == 'Task':
-                settings['hooks']['PostToolUse'][i] = hook_config
-                print(f"✅ 更新 Task Hook 設定")
-                break
-    else:
-        # 新增設定
-        settings['hooks']['PostToolUse'].append(hook_config)
-        print(f"✅ 新增 Task Hook 設定")
-
-    # 寫入設定
-    with open(settings_path, 'w', encoding='utf-8') as f:
-        json.dump(settings, f, indent=2)
-
-    print(f"✅ Claude Code Hook 設定完成: {settings_path}")
-    print(f"   Hook: PostToolUse → Task → post_task.py")
 
 
 def ask_add_to_claude_md(base_dir, auto_confirm=False):
-    """詢問是否將 PFC 系統設定加入專案的 CLAUDE.md
-
-    Args:
-        base_dir: han 系統目錄
-        auto_confirm: True 時自動確認，不詢問（供非互動模式使用）
-    """
+    """詢問是否將 PFC 系統設定加入專案的 CLAUDE.md"""
     print("\n" + "=" * 50)
 
-    # 找當前目錄的 CLAUDE.md
     cwd = os.getcwd()
     claude_md_path = os.path.join(cwd, 'CLAUDE.md')
 
@@ -367,7 +149,6 @@ def ask_add_to_claude_md(base_dir, auto_confirm=False):
     else:
         print("自動加入 CLAUDE.md 設定...")
 
-    # 要加入的設定內容
     pfc_config = '''
 ## HAN Multi-Agent 系統
 
@@ -412,9 +193,9 @@ def ask_add_to_claude_md(base_dir, auto_confirm=False):
 ### 系統入口（供 Agent 使用）
 
 ```python
-import sys
-import os
-sys.path.insert(0, os.path.expanduser('~/.claude/skills/han-agents'))
+import sys, os
+from servers import HAN_BASE_DIR
+sys.path.insert(0, HAN_BASE_DIR)
 from servers.tasks import get_task_progress, create_task
 from servers.memory import search_memory, load_checkpoint
 ```
@@ -426,20 +207,15 @@ from servers.memory import search_memory, load_checkpoint
 
     try:
         if os.path.exists(claude_md_path):
-            # 檢查是否已經有 PFC 設定
             with open(claude_md_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-
             if 'HAN Multi-Agent' in content:
                 print("⚠️  CLAUDE.md 已包含 PFC 系統設定，跳過")
                 return
-
-            # 附加到檔案末尾
             with open(claude_md_path, 'a', encoding='utf-8') as f:
                 f.write('\n' + pfc_config)
             print(f"✅ 已加入 {claude_md_path}")
         else:
-            # 建立新檔案
             with open(claude_md_path, 'w', encoding='utf-8') as f:
                 f.write(f"# {os.path.basename(cwd)} - 專案指令\n" + pfc_config)
             print(f"✅ 已建立 {claude_md_path}")
@@ -447,20 +223,15 @@ from servers.memory import search_memory, load_checkpoint
         print(f"❌ 無法寫入 CLAUDE.md: {e}")
         print(f"   請手動加入，參考：{os.path.join(base_dir, 'README.md')}")
 
-def ask_init_project_ssot(base_dir, auto_confirm=False):
-    """詢問是否為當前專案初始化 SSOT INDEX
 
-    Args:
-        base_dir: han 系統目錄
-        auto_confirm: True 時自動確認，不詢問（供非互動模式使用）
-    """
+def ask_init_project_ssot(base_dir, auto_confirm=False):
+    """詢問是否為當前專案初始化 SSOT INDEX"""
     print("\n" + "=" * 50)
 
     cwd = os.getcwd()
     pfc_dir = os.path.join(cwd, '.claude', 'pfc')
     index_path = os.path.join(pfc_dir, 'INDEX.md')
 
-    # 如果已存在，跳過
     if os.path.exists(index_path):
         print(f"✅ 專案 SSOT 已存在: {index_path}")
         return
@@ -473,10 +244,8 @@ def ask_init_project_ssot(base_dir, auto_confirm=False):
     else:
         print("自動初始化 SSOT INDEX...")
 
-    # 建立目錄
     os.makedirs(pfc_dir, exist_ok=True)
 
-    # INDEX 模板 - 給 LLM 的指示
     project_name = os.path.basename(cwd)
     index_template = f'''# {project_name} - SSOT Index
 
@@ -505,9 +274,6 @@ rules:
   # - id: rule.coding-standards
   #   ref: docs/coding-standards.md
   #   required: true
-  # - id: rule.api-guidelines
-  #   ref: docs/api-guidelines.md
-  #   required: true
 ```
 
 ## 技術文件
@@ -515,7 +281,6 @@ rules:
 ```yaml
 docs:
   # TODO: 請 Claude 掃描專案後填入
-  # 常見文件類型：PRD, ARCHITECTURE, API, README, CHANGELOG 等
 ```
 
 ## 主要程式碼
@@ -523,7 +288,6 @@ docs:
 ```yaml
 code:
   # TODO: 請 Claude 掃描專案後填入
-  # 指向主要入口點、核心模組、資料模型等
 ```
 '''
 
@@ -537,11 +301,7 @@ code:
 
 
 def ask_sync_code_graph(auto_confirm=False):
-    """詢問是否同步當前專案的 Code Graph
-
-    Args:
-        auto_confirm: True 時自動確認，不詢問（供非互動模式使用）
-    """
+    """詢問是否同步當前專案的 Code Graph"""
     print("\n" + "=" * 50)
 
     cwd = os.getcwd()
@@ -556,11 +316,7 @@ def ask_sync_code_graph(auto_confirm=False):
 
     print("📊 同步 Code Graph...")
     try:
-        # 動態載入 facade 模組（使用自動偵測的路徑）
-        _, base_dir = detect_platform()
-        sys.path.insert(0, base_dir)
         from servers.facade import sync
-
         result = sync(cwd)
         if result.get('status') == 'success':
             stats = result.get('stats', {})
@@ -573,97 +329,25 @@ def ask_sync_code_graph(auto_confirm=False):
         print("   請確認專案結構正確，之後可執行 `han sync` 重試")
 
 
-def upgrade_database(db_path, schema_path):
-    """升級資料庫：補齊缺失的 table（不影響現有資料）
-
-    使用 CREATE TABLE IF NOT EXISTS，所以只會建立缺失的 table，
-    不會影響現有資料。
-    """
-    if not os.path.exists(schema_path):
-        print(f"⚠️  找不到 schema: {schema_path}")
-        return
-
-    db = sqlite3.connect(db_path)
-    cursor = db.cursor()
-
-    # 取得現有 table 清單
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    existing_tables = {row[0] for row in cursor.fetchall()}
-
-    # 執行 schema（CREATE TABLE IF NOT EXISTS 不會重建現有 table）
-    with open(schema_path, encoding='utf-8') as f:
-        try:
-            cursor.executescript(f.read())
-        except sqlite3.OperationalError as e:
-            # 忽略 trigger 已存在的錯誤
-            if "already exists" not in str(e):
-                raise
-
-    # 取得新的 table 清單
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    new_tables = {row[0] for row in cursor.fetchall()}
-
-    # 計算新增的 table
-    added_tables = new_tables - existing_tables
-    if added_tables:
-        print(f"   📦 已補齊 {len(added_tables)} 個 table: {', '.join(sorted(added_tables))}")
-    else:
-        print("   （Schema 已是最新版）")
-
-    db.commit()
-    db.close()
-
-
-def init_database(db_path, schema_path):
-    """初始化 SQLite 資料庫"""
-    print(f"📦 初始化資料庫: {db_path}")
-
-    db = sqlite3.connect(db_path)
-    cursor = db.cursor()
-
-    # 執行 schema
-    if os.path.exists(schema_path):
-        with open(schema_path, encoding='utf-8') as f:
-            cursor.executescript(f.read())
-        print("✅ Schema 已載入")
-    else:
-        print(f"❌ 找不到 schema: {schema_path}")
-        return
-
-    # 插入初始記憶
-    cursor.execute('''
-        INSERT INTO long_term_memory (category, title, content, importance)
-        VALUES ('knowledge', 'System Initialized',
-                'HAN-Agents 已初始化。包含 PFC, Executor, Critic, Memory, Researcher 五個 agent。',
-                10)
-    ''')
-
-    db.commit()
-    db.close()
-    print("✅ 資料庫初始化完成")
-
 def reset_database():
     """強制重置資料庫（謹慎使用）"""
-    _, base_dir = detect_platform()
-    brain_dir = os.path.join(base_dir, 'brain')
-    db_path = os.path.join(brain_dir, 'brain.db')
-    schema_path = os.path.join(brain_dir, 'schema.sql')
-
     print("⚠️  警告：這會清空所有跨專案記憶！")
     response = input("確定要重置嗎？輸入 'RESET' 確認: ")
     if response == 'RESET':
-        if os.path.exists(db_path):
-            os.remove(db_path)
-        init_database(db_path, schema_path)
+        if os.path.exists(BRAIN_DB):
+            os.remove(BRAIN_DB)
+        # ensure_db 會重建
+        ensure_db().close()
         print("✅ 資料庫已重置")
     else:
         print("取消重置")
 
+
 if __name__ == '__main__':
     import argparse
 
-    parser = argparse.ArgumentParser(description='HAN System 安裝腳本')
-    parser.add_argument('--reset', action='store_true', help='重置資料庫（需手動確認，無法非互動）')
+    parser = argparse.ArgumentParser(description='HAN System 安裝腳本（Optional — zero-config 模式下不需要）')
+    parser.add_argument('--reset', action='store_true', help='重置資料庫（需手動確認）')
     parser.add_argument('--add-claude-md', action='store_true', help='自動加入 CLAUDE.md 設定')
     parser.add_argument('--init-ssot', action='store_true', help='自動初始化專案 SSOT INDEX')
     parser.add_argument('--sync-graph', action='store_true', help='自動同步 Code Graph')
@@ -673,20 +357,15 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.reset:
-        # reset 永遠需要手動確認，保護資料安全
         reset_database()
     else:
         base_dir, platform_key = install()
 
-        # 判斷執行模式
         if args.skip_prompts:
-            # 跳過所有後續詢問
             print("\n（使用 --skip-prompts，跳過可選設定）")
         elif args.all or args.add_claude_md or args.init_ssot or args.sync_graph:
-            # 有指定參數，按參數執行（非互動）
             if args.all:
                 args.add_claude_md = args.init_ssot = args.sync_graph = True
-
             if args.add_claude_md:
                 ask_add_to_claude_md(base_dir, auto_confirm=True)
             if args.init_ssot:
@@ -694,7 +373,6 @@ if __name__ == '__main__':
             if args.sync_graph:
                 ask_sync_code_graph(auto_confirm=True)
         else:
-            # 無參數時維持原本的互動詢問
             ask_add_to_claude_md(base_dir)
             ask_init_project_ssot(base_dir)
             ask_sync_code_graph()
