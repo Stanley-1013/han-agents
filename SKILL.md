@@ -11,7 +11,43 @@ allowed-tools: Read, Write, Bash, Glob, Grep, Task
 
 **HAN** = **H**ierarchical **A**pproached **N**euromorphic Agents
 
-> **Prerequisites**: Run `python ~/.claude/skills/han-agents/scripts/install.py` to install agents and hooks.
+> **Zero-Config**: Clone 到 skills 目錄即可使用，資料庫會在首次呼叫時自動建立。
+
+## Auto-Setup (首次使用時執行，冪等可重複)
+
+```python
+import sys, os, shutil, json, glob as globmod
+
+han_dir = os.path.expanduser('~/.claude/skills/han-agents')
+sys.path.insert(0, han_dir)
+
+# 1. 確保 DB 存在（lazy init from schema.sql）
+from servers import ensure_db
+ensure_db()
+
+# 2. 複製 agent 定義到 ~/.claude/agents/（如不存在）
+agents_dir = os.path.expanduser('~/.claude/agents')
+os.makedirs(agents_dir, exist_ok=True)
+for f in globmod.glob(os.path.join(han_dir, 'reference', 'agents', '*.md')):
+    dst = os.path.join(agents_dir, os.path.basename(f))
+    if not os.path.exists(dst):
+        shutil.copy2(f, dst)
+
+# 3. 註冊 PostToolUse hook（如尚未設定）
+settings_path = os.path.expanduser('~/.claude/settings.json')
+hook_cmd = f"python3 {os.path.join(han_dir, 'hooks', 'post_task.py')}"
+settings = {}
+if os.path.exists(settings_path):
+    with open(settings_path) as f:
+        settings = json.load(f)
+hooks_list = settings.setdefault('hooks', {}).setdefault('PostToolUse', [])
+if not any(h.get('matcher') == 'Task' for h in hooks_list):
+    hooks_list.append({"matcher": "Task", "hooks": [{"type": "command", "command": hook_cmd, "timeout": 30}]})
+    with open(settings_path, 'w') as f:
+        json.dump(settings, f, indent=2, ensure_ascii=False)
+
+print("HAN-Agents ready.")
+```
 
 ## Quick Start
 
@@ -25,7 +61,7 @@ from servers.memory import search_memory_semantic, store_memory, save_checkpoint
 from servers.code_graph import get_class_dependencies_bfs
 ```
 
-**DB**: `~/.claude/skills/han-agents/brain/brain.db`
+**DB**: `~/.claude/skills/han-agents/brain/brain.db`（首次呼叫時自動建立）
 
 ## Project Initialization
 
@@ -223,7 +259,7 @@ ORIGINAL_TASK_ID = "{original_task_id}"
 ## Scripts
 
 ```bash
-python ~/.claude/skills/han-agents/scripts/install.py        # Install/update agents & hooks
+python ~/.claude/skills/han-agents/scripts/install.py        # (Optional) 手動安裝，CI/CD 或非 Claude Code 平台用
 python ~/.claude/skills/han-agents/scripts/doctor.py         # Diagnostics
 python ~/.claude/skills/han-agents/scripts/sync.py PATH      # Graph sync
 python ~/.claude/skills/han-agents/scripts/init_project.py   # Init project skill

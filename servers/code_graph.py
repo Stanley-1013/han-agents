@@ -100,7 +100,8 @@ DB_PATH = os.path.join(_BASE_DIR, 'brain', 'brain.db')
 
 def get_db() -> sqlite3.Connection:
     """取得資料庫連線"""
-    conn = sqlite3.connect(DB_PATH)
+    from servers import ensure_db
+    conn = ensure_db()
     conn.row_factory = sqlite3.Row
     return conn
 

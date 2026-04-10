@@ -187,7 +187,8 @@ get_recent_episodes(project, limit=5) -> List[Dict]
 
 def get_db():
     """取得資料庫連線"""
-    return sqlite3.connect(BRAIN_DB)
+    from servers import ensure_db
+    return ensure_db()
 
 def calculate_similarity(text1: str, text2: str) -> float:
     """計算兩段文本的相似度（詞彙重疊率）

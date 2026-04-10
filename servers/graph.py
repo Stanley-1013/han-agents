@@ -199,7 +199,8 @@ get_access_history(project, node_id=None, limit=50) -> List[Dict]
 
 def get_db():
     """取得資料庫連線"""
-    return sqlite3.connect(BRAIN_DB)
+    from servers import ensure_db
+    return ensure_db()
 
 
 def _ensure_tables():

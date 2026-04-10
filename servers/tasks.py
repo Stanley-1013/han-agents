@@ -94,7 +94,8 @@ load_branch_context(branch, project_dir=None) -> str
 """
 
 def get_db():
-    return sqlite3.connect(BRAIN_DB)
+    from servers import ensure_db
+    return ensure_db()
 
 def create_task(project: str, description: str, priority: int = 5,
                 parent_id: str = None, branch: Dict = None,
