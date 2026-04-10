@@ -6,7 +6,8 @@
 
 ```python
 import sys, os
-sys.path.insert(0, os.path.expanduser('~/.claude/skills/han-agents'))
+from servers import HAN_BASE_DIR
+sys.path.insert(0, HAN_BASE_DIR)
 from servers.memory import get_project_context, load_checkpoint
 
 project = os.path.basename(os.getcwd())
@@ -27,29 +28,22 @@ checkpoint = load_checkpoint('TASK_ID')
 
 ## Project Initialization
 
-初始化專案 Skill 目錄：
+初始化專案（sync Code Graph + 偵測技術棧 + 存 DB）：
+
+```python
+from servers.project import ensure_project
+result = ensure_project('my-project', '/path/to/project')
+# result['tech_stack'] → {'primary_language': 'python', 'test_tool': 'pytest', ...}
+```
+
+Or via CLI:
 
 ```bash
-python ~/.claude/skills/han-agents/scripts/init_project.py <project-path> [project-name]
+cd <path-to-han-agents>
+python scripts/init_project.py my-project /path/to/project
 ```
 
-建立 `<project>/.claude/skills/<project-name>/SKILL.md` 空白模板。
-
-### 專案結構
-
-```
-<project>/
-└── .claude/
-    └── skills/
-        └── <project-name>/
-            ├── SKILL.md          # 專案核心文檔（由 LLM 填寫）
-            ├── flows/            # 業務流程 (可選)
-            │   └── *.md
-            ├── domains/          # 領域模型 (可選)
-            │   └── *.md
-            └── apis/             # API 規格 (可選)
-                └── *.md
-```
+專案資訊存在 DB 的 `long_term_memory` 中，不在專案目錄建立任何檔案。
 
 ## Starting Tasks
 
@@ -61,7 +55,36 @@ subtask_1 = create_subtask(task_id, "Step 1", assigned_agent='executor')
 subtask_2 = create_subtask(task_id, "Step 2", depends_on=[subtask_1])
 ```
 
-## Agent Dispatch Flow
+## Automated Workflow (Recommended)
+
+**Recipe + Dispatch Loop** — 自動建任務樹、自動派發 agent：
+
+```python
+from servers.recipes import recipe_unit_tests
+from servers.facade import get_next_dispatch
+
+# 1. Recipe 自動分析專案、建立任務樹
+result = recipe_unit_tests('my-project', '/path/to/project')
+print(result['message'])  # "Created 12 test tasks across 8 files."
+
+# 2. Dispatch loop — 重複呼叫直到完成
+while True:
+    inst = get_next_dispatch(result['epic_id'], 'my-project', '/path/to/project')
+    if inst['action'] != 'dispatch':
+        print(inst['message'])
+        break
+    # Claude Code: 用 Task tool 派發
+    Task(subagent_type=inst['subagent_type'], prompt=inst['prompt'])
+    # 其他平台: 直接在 context 中執行 inst['prompt']
+```
+
+**`get_next_dispatch()` 自動處理**:
+- Executor → Critic validation loop（幂等，不會建重複 critic）
+- Rejected → retry with feedback context
+- All done → Memory agent stores lessons（等完成才返回 done）
+- 返回 `model_tier`（planner/worker/fast）供平台選擇模型
+
+## Manual Agent Dispatch (Advanced)
 
 ```
 PFC (plan) → Executor (do) → Critic (verify) → Memory (store)
@@ -139,10 +162,15 @@ print("Suggest new conversation. Resume: Continue task {task_id}")
 from servers.tasks import (
     create_task, create_subtask, get_task, update_task_status,
     get_next_task, get_task_progress, get_unvalidated_tasks,
-    mark_validated, advance_task_phase
+    mark_validated, advance_task_phase, reserve_critic_task,
+    get_epic_tasks, get_story_tasks, get_hierarchy_summary,
 )
 # Status: pending, running, done, failed, blocked
 # Phase: execution, validation, documentation, completed
+# Task levels: epic, story, task, bug
+
+# Recipes
+from servers.recipes import recipe_unit_tests, run_recipe
 
 # Memory
 from servers.memory import (
@@ -215,9 +243,10 @@ store_memory(
 
 ## Best Practices
 
-1. Parallel dispatch for independent tasks
-2. Critic validates after each Executor
-3. Store important discoveries to Memory
-4. Checkpoint regularly
-5. Check drift before major changes
-6. Keep SKILL.md updated with implementation
+1. Use `recipe_unit_tests()` + `get_next_dispatch()` for automated workflows
+2. Parallel dispatch for independent tasks
+3. Critic validates after each Executor (auto-handled by dispatch loop)
+4. Store important discoveries to Memory
+5. Checkpoint regularly for long-running tasks
+6. Check drift before major changes
+7. Use `ensure_project()` for project initialization (no manual SKILL.md needed)

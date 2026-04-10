@@ -4,20 +4,30 @@
 
 ```python
 import sys, os
-sys.path.insert(0, os.path.expanduser('~/.claude/skills/han-agents'))
+from servers import HAN_BASE_DIR
+sys.path.insert(0, HAN_BASE_DIR)
 
 # Facade (recommended)
 from servers.facade import (
     init, sync, status, get_full_context, check_drift, sync_skill_graph,
-    finish_task, finish_validation, run_validation_cycle, validate_with_graph
+    finish_task, finish_validation, run_validation_cycle, validate_with_graph,
+    get_next_dispatch,  # Dispatch loop orchestration
 )
 
 # Tasks
 from servers.tasks import (
     create_task, create_subtask, get_task, update_task, update_task_status,
     get_next_task, get_task_progress, get_unvalidated_tasks, mark_validated,
-    advance_task_phase, get_task_branch, set_task_branch
+    advance_task_phase, get_task_branch, set_task_branch,
+    reserve_critic_task,  # Atomic critic reservation
+    get_epic_tasks, get_story_tasks, get_hierarchy_summary,
 )
+
+# Recipes (automated workflows)
+from servers.recipes import recipe_unit_tests, run_recipe
+
+# Project
+from servers.project import ensure_project
 
 # Memory
 from servers.memory import (
@@ -65,16 +75,78 @@ Critic must call when done. Returns `{status, next_action, resume_agent_id}`.
 ### validate_with_graph(modified_files, branch, project_path=None, project_name=None) -> Dict
 Graph-enhanced validation (impact analysis, Skill compliance, test coverage).
 
+### get_next_dispatch(parent_id, project_name, project_path) -> Dict
+Auto-dispatch next agent in the Executor → Critic → Memory pipeline.
+Returns structured instruction for the main conversation to execute.
+
+```python
+inst = get_next_dispatch(epic_id, 'my-project', '/path/to/project')
+# {
+#     'action': 'dispatch' | 'done' | 'blocked' | 'waiting',
+#     'subagent_type': 'executor' | 'critic' | 'memory',
+#     'model_tier': 'planner' | 'worker' | 'fast',
+#     'prompt': str,        # Complete prompt for Task tool
+#     'task_id': str,       # For tracking
+#     'progress': '3/7 tasks complete',
+#     'message': str,       # Human-readable status
+# }
+```
+
+**Idempotent**: repeated calls return the same critic task (no duplicates).
+**Memory-aware**: waits for memory task to complete before returning `done`.
+
+---
+
+## Recipes API
+
+### recipe_unit_tests(project_name, project_path, target_path=None, max_tasks=20) -> Dict
+Auto-generate unit test task tree from coverage gaps.
+
+```python
+result = recipe_unit_tests('my-project', '/path/to/project', target_path='src/')
+# {
+#     'epic_id': str,      # Feed to get_next_dispatch()
+#     'task_count': int,
+#     'story_count': int,
+#     'gaps_found': int,
+#     'stories': [...],
+#     'message': str,
+# }
+```
+
+### run_recipe(name, **kwargs) -> Dict
+Run recipe by name. Available: `'unit_tests'`.
+
+---
+
+## Project API
+
+### ensure_project(project_name, project_path=None) -> Dict
+Idempotent project initialization: sync Code Graph + detect tech stack + store in DB.
+
+```python
+result = ensure_project('my-project', '/path/to/project')
+# {
+#     'sync_result': {...},
+#     'tech_stack': {'primary_language': 'python', 'test_tool': 'pytest', 'frameworks': [...]},
+#     'already_initialized': bool,
+# }
+```
+
+Tech stack is auto-detected from Code Graph (language distribution + import edges).
+Upserts Tech Stack memory (no duplicate records on repeated calls).
+
 ---
 
 ## Tasks API
 
-### create_task(project, description, priority=5, parent_id=None, branch=None) -> str
+### create_task(project, description, priority=5, parent_id=None, task_level=None, epic_id=None, story_id=None, branch=None) -> str
 Create task, returns task_id.
+- `task_level`: 'epic', 'story', 'task', 'bug'
 - `branch`: `{'flow_id': 'flow.auth', 'domain_ids': ['domain.user']}`
 
-### create_subtask(parent_id, description, assigned_agent='executor', depends_on=None, requires_validation=True) -> str
-Create subtask with optional dependencies.
+### create_subtask(parent_id, description, assigned_agent='executor', depends_on=None, requires_validation=True, task_level='task', epic_id=None, story_id=None) -> str
+Create subtask with optional dependencies. Auto-inherits `epic_id`/`story_id` from parent when not specified.
 - `assigned_agent`: 'executor', 'critic', 'memory', 'researcher'
 - `depends_on`: list of task_ids
 
@@ -94,7 +166,12 @@ Get next executable task (dependencies completed).
 Get progress stats: `{total, completed, pending, percentage}`.
 
 ### get_unvalidated_tasks(parent_id) -> List[Dict]
-Get tasks pending validation.
+Get tasks pending validation. Skips tasks that already have an active (pending/running) critic.
+
+### reserve_critic_task(original_task_id) -> Optional[Dict]
+Atomically reserve or reuse a critic task for a completed task. Uses `BEGIN IMMEDIATE` for concurrency safety.
+Returns `{'id', 'original_task_id', 'original_description', 'result'}` or `None`.
+**Idempotent**: repeated calls return the same critic task.
 
 ### mark_validated(task_id, status, validator_task_id=None) -> None
 Mark validation: 'approved', 'rejected', 'skipped'.

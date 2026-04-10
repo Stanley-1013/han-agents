@@ -49,8 +49,10 @@ import sys, os
 from servers import HAN_BASE_DIR
 sys.path.insert(0, HAN_BASE_DIR)
 
-from servers.facade import get_full_context, check_drift, sync, finish_task
+from servers.facade import get_full_context, check_drift, sync, finish_task, get_next_dispatch
 from servers.tasks import create_task, create_subtask, get_task_progress, get_epic_tasks, get_hierarchy_summary
+from servers.recipes import recipe_unit_tests, run_recipe
+from servers.project import ensure_project
 from servers.memory import search_memory_semantic, store_memory, save_checkpoint, load_checkpoint
 from servers.code_graph import get_class_dependencies_bfs
 ```
@@ -64,17 +66,9 @@ from servers.code_graph import get_class_dependencies_bfs
 ```python
 from servers.project import ensure_project
 result = ensure_project('my-project', '/path/to/project')
-# 自動建立 <project>/<platform_skill_dir>/my-project/SKILL.md 模板
-# 自動寫入 DB 記錄
+# 自動 sync Code Graph + 偵測技術棧 + 存 DB
+# result['tech_stack'] → {'primary_language': 'python', 'test_tool': 'pytest', ...}
 ```
-
-或手動執行：
-
-```bash
-python <han-agents>/scripts/init_project.py <project-name> <project-path>
-```
-
-建立專案 SKILL.md 空白模板（跨平台自動偵測目錄），由 LLM 填寫專案核心文檔。
 
 ## When to Use
 
@@ -87,14 +81,14 @@ python <han-agents>/scripts/init_project.py <project-name> <project-path>
 
 ## Agents
 
-| Agent | subagent_type | Purpose |
-|-------|---------------|---------|
-| PFC | `pfc` | Planning, decomposition |
-| Executor | `executor` | Task execution |
-| Critic | `critic` | Validation |
-| Memory | `memory` | Knowledge storage |
-| Researcher | `researcher` | Information gathering |
-| Drift Detector | `drift-detector` | Skill-Code drift |
+| Agent | subagent_type | model_tier | Purpose |
+|-------|---------------|------------|---------|
+| PFC | `pfc` | `planner` | Planning, decomposition |
+| Executor | `executor` | `worker` | Task execution |
+| Critic | `critic` | `worker` | Validation |
+| Memory | `memory` | `fast` | Knowledge storage |
+| Researcher | `researcher` | `worker` | Information gathering |
+| Drift Detector | `drift-detector` | `fast` | Skill-Code drift |
 
 ## Workflow
 
@@ -143,9 +137,40 @@ epics = get_epic_tasks('P')  # Returns epics with nested stories
 summary = get_hierarchy_summary('P')  # {epics: N, stories: N, tasks: N, bugs: N}
 ```
 
-## Agent Dispatch (Claude Code Task Tool)
+## Automated Workflow (Recommended)
 
-**主對話必須使用 Claude Code Task tool 派發 agent：**
+**Recipe + Dispatch Loop** — 自動建任務樹、自動派發 agent：
+
+```python
+from servers.recipes import recipe_unit_tests
+from servers.facade import get_next_dispatch
+
+# 1. Recipe 自動分析專案、建立任務樹
+result = recipe_unit_tests('my-project', '/path/to/project')
+print(result['message'])  # "Created 12 test tasks across 8 files."
+
+# 2. Dispatch loop — 重複呼叫直到完成
+while True:
+    inst = get_next_dispatch(result['epic_id'], 'my-project', '/path/to/project')
+    if inst['action'] != 'dispatch':
+        print(inst['message'])
+        break
+    # Claude Code: 用 Task tool 派發
+    Task(subagent_type=inst['subagent_type'], prompt=inst['prompt'])
+    # 其他平台: 直接在 context 中執行 inst['prompt']
+```
+
+**Available Recipes**: `unit_tests` (more coming)
+
+**get_next_dispatch() 自動處理**:
+- Executor → Critic validation loop（幂等，不會建重複 critic）
+- Rejected → retry with feedback context
+- All done → Memory agent stores lessons（等完成才返回 done）
+- 返回 `model_tier`（planner/worker/fast）供平台選擇模型
+
+## Manual Agent Dispatch (Advanced)
+
+直接使用 Task tool 派發 agent：
 
 ```
 Task(
@@ -258,10 +283,10 @@ ORIGINAL_TASK_ID = "{original_task_id}"
 ## Scripts
 
 ```bash
-python ~/.claude/skills/han-agents/scripts/install.py        # (Optional) 手動安裝，CI/CD 或非 Claude Code 平台用
-python ~/.claude/skills/han-agents/scripts/doctor.py         # Diagnostics
-python ~/.claude/skills/han-agents/scripts/sync.py PATH      # Graph sync
-python ~/.claude/skills/han-agents/scripts/init_project.py   # Init project skill
+python <han-agents>/scripts/install.py        # (Optional) 手動安裝
+python <han-agents>/scripts/doctor.py         # Diagnostics
+python <han-agents>/scripts/sync.py PATH      # Graph sync
+python <han-agents>/scripts/init_project.py NAME [PATH]  # Init project
 ```
 
 ## Reference

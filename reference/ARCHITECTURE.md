@@ -368,7 +368,7 @@ brain/brain.db            # 包含：
 
 ```
 你的機器
-├── ~/.claude/skills/han-agents/brain/brain.db     # 你的記憶
+├── <han-agents>/brain/brain.db     # 你的記憶
 └── ~/your-project/brain/ssot/                # 本地 SSOT
 ```
 
@@ -382,7 +382,7 @@ Git Repository (共享)
 └── brain/ssot/           # SSOT 由 Git 管理
 
 每個人的機器
-└── ~/.claude/skills/han-agents/brain/brain.db     # 各自的記憶
+└── <han-agents>/brain/brain.db     # 各自的記憶
 ```
 
 **關鍵實踐：**
