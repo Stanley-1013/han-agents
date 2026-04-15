@@ -27,13 +27,22 @@ result = sync('/path/to/project', 'my-project', incremental=True)
 ```
 
 ### Node Types
-`file`, `class`, `function`, `interface`, `variable`, `import`
+`file`, `class`, `struct`, `function`, `interface`, `type`, `constant`, `module`
 
 ### Edge Types
-`imports`, `calls`, `extends`, `implements`, `contains`
+`imports`, `calls`, `extends`, `implements`, `contains`, `defines`
 
 ### Supported Languages
-TypeScript/JavaScript, Python, Go
+TypeScript/JavaScript, Python, Java, Rust, Go
+
+### Parser Backends
+- **Tree-sitter** (priority): Accurate AST parsing with call graph + method extraction
+- **Regex** (fallback): Pattern-based extraction when tree-sitter unavailable
+
+```python
+from tools.code_graph_extractor.backends import get_backend, list_backends
+print(list_backends())  # Shows registered backends and capabilities
+```
 
 ## Skill Graph Sync
 

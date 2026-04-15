@@ -204,7 +204,8 @@ def get_drift_context(project, project_dir) -> Dict:
 | `servers/ssot.py` | SKILL.md 解析（動態分段，無硬編碼分類） | 無 |
 | `servers/memory.py` | 記憶操作 | 無 |
 | `servers/tasks.py` | 任務管理 | 無 |
-| `tools/code_graph_extractor/` | AST 解析 | 無 |
+| `tools/code_graph_extractor/` | AST 解析（Tree-sitter + regex fallback） | 無 |
+| `tools/code_graph_extractor/backends/` | Parser backend 抽象層 + registry | extractor |
 | `cli/doctor.py` | 系統診斷 | 所有 servers |
 
 ---
@@ -232,11 +233,19 @@ register_node_kind('component', '元件', 'React/Vue 元件')
 
 ### 新增語言支援
 
-1. 在 `tools/code_graph_extractor/extractor.py` 新增：
-   - `SUPPORTED_EXTENSIONS` 映射
-   - `RegexExtractor.extract_{language}()` 方法
+**推薦方式（Tree-sitter）：**
 
-2. （可選）整合 Tree-sitter 語言綁定以提高準確度。
+1. 安裝語言 grammar: `pip install tree-sitter-{language}`
+2. 在 `backends/tree_sitter_backend.py` 新增：
+   - `_load_grammar()` loader mapping
+   - `LanguageQueryPack` 定義（AST node types + extraction hooks）
+   - 加入 `QUERY_PACKS` registry
+3. 在 `extractor.py` 的 `SUPPORTED_EXTENSIONS` 新增映射
+
+**Fallback 方式（Regex）：**
+
+1. 在 `extractor.py` 新增 `RegexExtractor.extract_{language}()` 方法
+2. 在 `backends/regex_backend.py` 的 `_EXTRACTORS` dict 新增映射
 
 ### 新增 Agent
 
@@ -280,7 +289,11 @@ register_node_kind('component', '元件', 'React/Vue 元件')
 ├── tools/
 │   └── code_graph_extractor/  # AST 提取工具
 │       ├── __init__.py
-│       └── extractor.py
+│       ├── extractor.py         # Core extraction + RegexExtractor
+│       └── backends/            # Parser backend 抽象層
+│           ├── __init__.py      # ExtractorBackend protocol + registry
+│           ├── regex_backend.py # Regex fallback backend
+│           └── tree_sitter_backend.py  # Tree-sitter AST backend
 ├── cli/                     # 命令列工具
 │   ├── __init__.py
 │   └── doctor.py            # 系統診斷

@@ -14,6 +14,7 @@ import sqlite3
 import json
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
+from collections import defaultdict
 
 # =============================================================================
 # SCHEMA（供 Agent 參考）
@@ -155,72 +156,91 @@ def sync_from_directory(
         nodes_updated = 0
         edges_added = 0
 
-        # 插入/更新 nodes
+        # Precompute per-file counts (Phase 0.3)
+        node_count_by_file = defaultdict(int)
+        edge_count_by_file = defaultdict(int)
         for node in result['nodes']:
-            try:
-                conn.execute(
-                    """
-                    INSERT INTO code_nodes
-                    (id, project, kind, name, file_path, line_start, line_end, signature, language, visibility, hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id, project) DO UPDATE SET
-                        kind = excluded.kind,
-                        name = excluded.name,
-                        file_path = excluded.file_path,
-                        line_start = excluded.line_start,
-                        line_end = excluded.line_end,
-                        signature = excluded.signature,
-                        language = excluded.language,
-                        visibility = excluded.visibility,
-                        hash = excluded.hash,
-                        last_updated = CURRENT_TIMESTAMP
-                    """,
-                    (
-                        node['id'], project, node['kind'], node['name'],
-                        node['file_path'], node.get('line_start', 0), node.get('line_end', 0),
-                        node.get('signature'), node.get('language'), node.get('visibility'), node.get('hash')
-                    )
-                )
-                if conn.total_changes > 0:
-                    nodes_added += 1
-            except sqlite3.IntegrityError:
-                nodes_updated += 1
+            fp = node.get('file_path', '')
+            if fp:
+                node_count_by_file[fp] += 1
+        for edge in result['edges']:
+            from_id = edge.get('from_id', '')
+            if '.' in from_id:
+                source_path = from_id.split('.', 1)[1].split(':', 1)[0]
+                edge_count_by_file[source_path] += 1
 
-        # 插入 edges（先刪除舊的再插入新的）
+        # Batch upsert nodes (Phase 0.5)
+        node_rows = [
+            (
+                node['id'], project, node['kind'], node['name'],
+                node['file_path'], node.get('line_start', 0), node.get('line_end', 0),
+                node.get('signature'), node.get('language'), node.get('visibility'), node.get('hash')
+            )
+            for node in result['nodes']
+        ]
+        if node_rows:
+            conn.executemany(
+                """
+                INSERT INTO code_nodes
+                (id, project, kind, name, file_path, line_start, line_end, signature, language, visibility, hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id, project) DO UPDATE SET
+                    kind = excluded.kind,
+                    name = excluded.name,
+                    file_path = excluded.file_path,
+                    line_start = excluded.line_start,
+                    line_end = excluded.line_end,
+                    signature = excluded.signature,
+                    language = excluded.language,
+                    visibility = excluded.visibility,
+                    hash = excluded.hash,
+                    last_updated = CURRENT_TIMESTAMP
+                """,
+                node_rows
+            )
+            nodes_added = len(node_rows)
+
+        # Exact file-scoped edge deletion (Phase 0.2)
         processed_files = set(n['file_path'] for n in result['nodes'] if n['kind'] == 'file')
         for file_path in processed_files:
-            # 刪除此檔案產出的舊 edges
             conn.execute(
                 """
                 DELETE FROM code_edges
-                WHERE project = ? AND from_id LIKE ?
+                WHERE project = ?
+                  AND from_id IN (
+                      SELECT id FROM code_nodes
+                      WHERE project = ? AND file_path = ?
+                  )
                 """,
-                (project, f"%.{file_path}%")
+                (project, project, file_path)
             )
 
-        for edge in result['edges']:
-            try:
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO code_edges
-                    (project, from_id, to_id, kind, line_number, confidence)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        project, edge['from_id'], edge['to_id'], edge['kind'],
-                        edge.get('line_number'), edge.get('confidence', 1.0)
-                    )
-                )
-                edges_added += 1
-            except sqlite3.IntegrityError:
-                pass
+        # Batch insert edges (Phase 0.5)
+        edge_rows = [
+            (
+                project, edge['from_id'], edge['to_id'], edge['kind'],
+                edge.get('line_number'), edge.get('confidence', 1.0)
+            )
+            for edge in result['edges']
+        ]
+        if edge_rows:
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO code_edges
+                (project, from_id, to_id, kind, line_number, confidence)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                edge_rows
+            )
+            edges_added = len(edge_rows)
 
-        # 更新 file hashes
-        for file_path, hash_val in result['file_hashes'].items():
-            node_count = sum(1 for n in result['nodes'] if n.get('file_path') == file_path or n.get('file_path', '').endswith(file_path))
-            edge_count = sum(1 for e in result['edges'] if file_path in e.get('from_id', ''))
-
-            conn.execute(
+        # Batch update file hashes with precomputed counts (Phase 0.3)
+        hash_rows = [
+            (project, fp, hv, node_count_by_file[fp], edge_count_by_file[fp])
+            for fp, hv in result['file_hashes'].items()
+        ]
+        if hash_rows:
+            conn.executemany(
                 """
                 INSERT INTO file_hashes (project, file_path, hash, node_count, edge_count)
                 VALUES (?, ?, ?, ?, ?)
@@ -230,7 +250,7 @@ def sync_from_directory(
                     edge_count = excluded.edge_count,
                     last_updated = CURRENT_TIMESTAMP
                 """,
-                (project, file_path, hash_val, node_count, edge_count)
+                hash_rows
             )
 
         conn.commit()

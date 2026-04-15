@@ -27,6 +27,8 @@ def ensure_db() -> sqlite3.Connection:
             if not _db_initialized:
                 if not os.path.exists(BRAIN_DB):
                     _init_db_from_schema()
+                else:
+                    _ensure_indexes()
                 _db_initialized = True
     return sqlite3.connect(BRAIN_DB)
 
@@ -39,6 +41,21 @@ def managed_connection(row_factory=False):
         conn.row_factory = sqlite3.Row
     try:
         yield conn
+    finally:
+        conn.close()
+
+
+def _ensure_indexes():
+    """Ensure composite indexes exist on existing databases (migration-safe)."""
+    conn = sqlite3.connect(BRAIN_DB)
+    try:
+        conn.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_code_nodes_project_file ON code_nodes(project, file_path);
+            CREATE INDEX IF NOT EXISTS idx_code_edges_project_from_kind ON code_edges(project, from_id, kind);
+            CREATE INDEX IF NOT EXISTS idx_code_edges_project_to_kind ON code_edges(project, to_id, kind);
+        """)
+    except sqlite3.OperationalError:
+        pass  # Tables may not exist yet
     finally:
         conn.close()
 

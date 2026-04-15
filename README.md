@@ -2,36 +2,40 @@
 
 **HAN** = **H**ierarchical **A**pproached **N**euromorphic Agents
 
-- **Hierarchical**: PFC coordinates specialized agents (Executor, Critic, Memory, Researcher)
-- **Approached**: Task-driven methodology with planning → execution → validation workflow
-- **Neuromorphic**: Brain-inspired architecture (Prefrontal Cortex, Motor Cortex, Hippocampus)
-
-A multi-agent task system with three-layer architecture: **Skill** (intent) + **Code Graph** (reality) + **Memory** (experience).
+A multi-agent task system with three-layer architecture: **Skill** (intent) + **Code Graph** (reality) + **Memory** (experience). Brain-inspired design where PFC coordinates specialized agents through automated dispatch loops.
 
 Works with any AI coding agent that supports the [Agent Skills](https://agentskills.io) standard, including Claude Code, Cursor, Windsurf, Cline, Codex CLI, Gemini CLI, Antigravity, and Kiro.
 
+## Features
+
+- **Automated Dispatch Loop** — `get_next_dispatch()` auto-orchestrates Executor → Critic → Memory pipeline
+- **Recipe System** — Pre-built workflows (e.g. `recipe_unit_tests()`) that auto-generate task trees
+- **Task Lifecycle** — Jira-like hierarchy (Epic → Story → Task → Bug) with create, execute, validate, and document
+- **Code Graph** — Tree-sitter AST + regex fallback, with call graph and method extraction (6 languages)
+- **Drift Detection** — Compare Skill definitions against actual code implementation
+- **Semantic Memory** — FTS5 + embedding-based search with LLM reranking
+- **Auto Tech Stack Detection** — `ensure_project()` auto-detects languages, frameworks, and test tools
+- **Micro-Nap Checkpoints** — Save/resume long-running tasks across conversations
+- **Zero-Config** — Clone to skills directory, database auto-creates on first use
+
 ## Installation
 
-### Step 1: Clone to Your Platform's Skills Directory
+### Step 1: Clone
 
-Choose your AI coding agent and clone to the appropriate location:
+Clone to your AI coding agent's skills directory:
 
 <details>
 <summary><b>Claude Code</b></summary>
 
 ```bash
-# macOS/Linux (global)
+# Global (recommended)
 git clone https://github.com/Stanley-1013/han-agents.git ~/.claude/skills/han-agents
 
-# Windows (PowerShell)
-git clone https://github.com/Stanley-1013/han-agents.git "$env:USERPROFILE\.claude\skills\han-agents"
-
-# Windows (CMD)
-git clone https://github.com/Stanley-1013/han-agents.git "%USERPROFILE%\.claude\skills\han-agents"
-
-# Project-level (recommended for team projects)
+# Project-level
 git clone https://github.com/Stanley-1013/han-agents.git .claude/skills/han-agents
 ```
+
+Windows (PowerShell): replace `~` with `$env:USERPROFILE`
 
 </details>
 
@@ -39,182 +43,70 @@ git clone https://github.com/Stanley-1013/han-agents.git .claude/skills/han-agen
 <summary><b>Cursor</b></summary>
 
 ```bash
-# macOS/Linux (global)
+# Global
 git clone https://github.com/Stanley-1013/han-agents.git ~/.cursor/skills/han-agents
-
-# Windows (PowerShell)
-git clone https://github.com/Stanley-1013/han-agents.git "$env:USERPROFILE\.cursor\skills\han-agents"
-
-# Windows (CMD)
-git clone https://github.com/Stanley-1013/han-agents.git "%USERPROFILE%\.cursor\skills\han-agents"
 
 # Project-level
 git clone https://github.com/Stanley-1013/han-agents.git .cursor/skills/han-agents
 ```
 
-</details>
-
-<details>
-<summary><b>Windsurf</b></summary>
-
-```bash
-# Project-level (recommended)
-git clone https://github.com/Stanley-1013/han-agents.git .windsurf/skills/han-agents
-```
+> Enable Skills in Cline-based Cursor: Settings → Features → Enable Skills
 
 </details>
 
 <details>
-<summary><b>Cline</b></summary>
+<summary><b>Windsurf / Cline / Codex CLI / Gemini CLI / Antigravity</b></summary>
 
-```bash
-# macOS/Linux (global)
-git clone https://github.com/Stanley-1013/han-agents.git ~/.cline/skills/han-agents
+Replace the skills directory with your platform's equivalent:
 
-# Windows (PowerShell)
-git clone https://github.com/Stanley-1013/han-agents.git "$env:USERPROFILE\.cline\skills\han-agents"
-
-# Windows (CMD)
-git clone https://github.com/Stanley-1013/han-agents.git "%USERPROFILE%\.cline\skills\han-agents"
-
-# Project-level
-git clone https://github.com/Stanley-1013/han-agents.git .cline/skills/han-agents
-```
-
-> **Note**: Enable Skills in Cline: Settings → Features → Enable Skills
-
-</details>
-
-<details>
-<summary><b>Codex CLI (OpenAI)</b></summary>
-
-```bash
-# macOS/Linux (global)
-git clone https://github.com/Stanley-1013/han-agents.git ~/.codex/skills/han-agents
-
-# Windows (PowerShell)
-git clone https://github.com/Stanley-1013/han-agents.git "$env:USERPROFILE\.codex\skills\han-agents"
-
-# Windows (CMD)
-git clone https://github.com/Stanley-1013/han-agents.git "%USERPROFILE%\.codex\skills\han-agents"
-
-# Project-level
-git clone https://github.com/Stanley-1013/han-agents.git .codex/skills/han-agents
-```
-
-</details>
-
-<details>
-<summary><b>Gemini CLI</b></summary>
-
-```bash
-# Project-level
-git clone https://github.com/Stanley-1013/han-agents.git .gemini/skills/han-agents
-```
-
-</details>
-
-<details>
-<summary><b>Antigravity (Google)</b></summary>
-
-```bash
-# macOS/Linux (global)
-git clone https://github.com/Stanley-1013/han-agents.git ~/.antigravity/skills/han-agents
-
-# Windows (PowerShell)
-git clone https://github.com/Stanley-1013/han-agents.git "$env:USERPROFILE\.antigravity\skills\han-agents"
-
-# Windows (CMD)
-git clone https://github.com/Stanley-1013/han-agents.git "%USERPROFILE%\.antigravity\skills\han-agents"
-
-# Project-level
-git clone https://github.com/Stanley-1013/han-agents.git .antigravity/skills/han-agents
-```
+| Platform | Directory |
+|----------|-----------|
+| Windsurf | `.windsurf/skills/han-agents` |
+| Cline | `~/.cline/skills/han-agents` |
+| Codex CLI | `~/.codex/skills/han-agents` |
+| Gemini CLI | `.gemini/skills/han-agents` |
+| Antigravity | `~/.antigravity/skills/han-agents` |
 
 </details>
 
 <details>
 <summary><b>Kiro (AWS)</b></summary>
 
-Kiro uses the **Powers** system with one-click install. Visit [kiro.dev](https://kiro.dev) and search for "han-agents", or install from GitHub URL in Kiro's Powers panel.
+Uses the **Powers** system — search for "han-agents" in Kiro's Powers panel or install from GitHub URL.
 
 </details>
 
-### Step 2: Run Install Script
-
-Run the install script from **inside the cloned directory**:
+### Step 2: Install
 
 ```bash
-# cd into the cloned han-agents directory first
 cd <path-to-han-agents>
-
-# Then run install (works on all platforms)
 python scripts/install.py --skip-prompts
 ```
 
-**Examples:**
-```bash
-# macOS/Linux - global install
-cd ~/.claude/skills/han-agents && python scripts/install.py --skip-prompts
-
-# macOS/Linux - project-level install
-cd .claude/skills/han-agents && python scripts/install.py --skip-prompts
-
-# Windows (PowerShell) - global install
-cd "$env:USERPROFILE\.claude\skills\han-agents"; python scripts/install.py --skip-prompts
-
-# Windows (PowerShell) - project-level install
-cd .claude\skills\han-agents; python scripts/install.py --skip-prompts
-
-# Windows (CMD) - global install
-cd "%USERPROFILE%\.claude\skills\han-agents" && python scripts/install.py --skip-prompts
-```
-
-The script auto-detects your platform and performs the appropriate setup:
+The script auto-detects your platform and sets up database, agents, and hooks:
 
 | Platform | Database | Agents | Hooks |
 |----------|----------|--------|-------|
-| Claude Code | ✅ Initialize | ✅ Copy to `~/.claude/agents/` | ✅ PostToolUse Hook |
-| Cursor | ✅ Initialize | ✅ Copy to `.cursor/agents/` | ❌ Not supported |
-| Others | ✅ Initialize | ❌ No agents directory | ❌ Not supported |
-
-**About Agent Files**: The `reference/agents/*.md` files define agent behaviors (PFC, Executor, Critic, etc.). For the AI coding agent to use them with the Task tool's `subagent_type` parameter, they must be copied to the platform's agents directory:
-
-| Platform | Agents Directory |
-|----------|-----------------|
-| Claude Code | `~/.claude/agents/` (global) |
-| Cursor | `.cursor/agents/` (project-level) |
-
-The install script handles this automatically. If you skip the script or need manual setup, copy the files from `reference/agents/` to your platform's agents directory.
+| Claude Code | ✅ | ✅ `~/.claude/agents/` | ✅ PostToolUse |
+| Cursor | ✅ | ✅ `.cursor/agents/` | — |
+| Others | ✅ | — | — |
 
 Install options:
-- `--skip-prompts`: Non-interactive mode (recommended for scripts)
-- `--all`: Run all optional setup steps
-- `--add-claude-md`: Add config to project's CLAUDE.md
-- `--init-ssot`: Initialize project SSOT INDEX
-- `--sync-graph`: Sync Code Graph
 
-### Verify Installation
+| Flag | Description |
+|------|-------------|
+| `--skip-prompts` | Non-interactive mode |
+| `--all` | Run all optional setup steps |
+| `--add-claude-md` | Add config to project's CLAUDE.md |
+| `--init-ssot` | Initialize project SSOT INDEX |
+| `--sync-graph` | Sync Code Graph |
+| `--reset` | Reset database |
+
+### Verify
 
 ```bash
-# Run from inside the cloned han-agents directory
-cd <path-to-han-agents>
 python scripts/doctor.py
 ```
-
-## Features
-
-- **Automated Dispatch Loop**: `get_next_dispatch()` auto-orchestrates Executor → Critic → Memory pipeline
-- **Recipe System**: Pre-built workflows (e.g. `recipe_unit_tests()`) that auto-generate task trees
-- **Task Lifecycle Management**: Create, execute, validate, and document tasks with multiple agents
-- **Hierarchical Tasks**: Jira-like task structure (Epic → Story → Task → Bug) with auto-inherited hierarchy
-- **Code Graph**: AST-based code analysis for TypeScript, Python, Go, Java, and Rust
-  - Java: Extracts `@Autowired`, `@Inject`, `@MockBean` as `injects` edges (implicit dependencies)
-  - BFS dependency traversal for precise Unit Test context collection
-- **Drift Detection**: Compare Skill definitions against actual code implementation
-- **Semantic Memory**: FTS5 + embedding-based search with LLM reranking
-- **Auto Tech Stack Detection**: `ensure_project()` auto-detects languages, frameworks, and test tools from Code Graph
-- **Micro-Nap Checkpoints**: Save/resume long-running tasks across conversations
 
 ## Quick Start
 
@@ -230,12 +122,9 @@ from servers.memory import search_memory_semantic, store_memory
 from servers.project import ensure_project
 ```
 
-## Project Setup
-
-Initialize a project (syncs Code Graph + detects tech stack, stores in DB):
+### Initialize a Project
 
 ```python
-from servers.project import ensure_project
 result = ensure_project('my-project', '/path/to/project')
 # result['tech_stack'] → {'primary_language': 'python', 'test_tool': 'pytest', ...}
 ```
@@ -243,22 +132,46 @@ result = ensure_project('my-project', '/path/to/project')
 Or via CLI:
 
 ```bash
-python <han-agents>/scripts/init_project.py my-project /path/to/project
+python cli/main.py init my-project /path/to/project
 ```
+
+### Recipe + Dispatch Loop
+
+One command to generate tasks, auto-dispatch agents:
+
+```python
+# 1. Recipe auto-analyzes project, builds task tree
+result = recipe_unit_tests('my-project', '/path/to/project')
+
+# 2. Dispatch loop — repeat until done
+while True:
+    inst = get_next_dispatch(result['epic_id'], 'my-project', '/path/to/project')
+    if inst['action'] != 'dispatch':
+        break
+    # Claude Code: dispatch via Task tool
+    Task(subagent_type=inst['subagent_type'], prompt=inst['prompt'])
+```
+
+`get_next_dispatch()` handles automatically:
+- Executor → Critic validation loop (idempotent, no duplicate critics)
+- Rejected tasks → retry with feedback context
+- All done → Memory agent stores lessons learned
+- Returns `model_tier` for platform-specific model selection
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     HAN System                      │
-├──────────────┬──────────────┬──────────────┬────────────────┤
-│  Skill Layer │  Code Graph  │    Memory    │     Tasks      │
-│   (Intent)   │  (Reality)   │ (Experience) │  (Execution)   │
-├──────────────┼──────────────┼──────────────┼────────────────┤
-│  SKILL.md    │  code_nodes  │  long_term   │    tasks       │
-│  flows/*.md  │  code_edges  │  episodes    │  checkpoints   │
-│  domains/*   │  file_hashes │  working_mem │  agent_logs    │
-└──────────────┴──────────────┴──────────────┴────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                        HAN System                            │
+├───────────────┬───────────────┬───────────────┬──────────────┤
+│  Skill Layer  │  Code Graph   │    Memory     │    Tasks     │
+│   (Intent)    │  (Reality)    │ (Experience)  │ (Execution)  │
+├───────────────┼───────────────┼───────────────┼──────────────┤
+│  SKILL.md     │  code_nodes   │ long_term_    │   tasks      │
+│  flows/*.md   │  code_edges   │   memory      │ checkpoints  │
+│  domains/*    │  file_hashes  │ working_      │ agent_logs   │
+│               │               │   memory      │              │
+└───────────────┴───────────────┴───────────────┴──────────────┘
 ```
 
 ## Agents
@@ -274,7 +187,7 @@ python <han-agents>/scripts/init_project.py my-project /path/to/project
 
 > **Model Tier**: Semantic capability levels — `planner` (strongest reasoning), `worker` (balanced), `fast` (low-cost). Each platform maps tiers to its own models.
 
-## Key APIs
+## API Reference
 
 ### Facade (Unified Entry Point)
 
@@ -285,11 +198,11 @@ from servers.facade import (
     check_drift,       # Skill vs Code drift
     get_full_context,  # Three-layer context
     finish_task,       # Complete task lifecycle
-    get_next_dispatch, # Auto-dispatch next agent (dispatch loop)
+    get_next_dispatch, # Auto-dispatch next agent
 )
 ```
 
-### Recipes (Automated Workflows)
+### Recipes
 
 ```python
 from servers.recipes import (
@@ -302,12 +215,12 @@ from servers.recipes import (
 
 ```python
 from servers.tasks import (
-    create_task,           # Create task (supports task_level: epic/story/task/bug)
+    create_task,           # Create task (epic/story/task/bug)
     create_subtask,        # Create child task (auto-inherits hierarchy)
     reserve_critic_task,   # Atomic critic reservation (idempotent)
-    get_task_progress,     # Get completion stats
-    get_epic_tasks,        # Get epics with nested stories
-    get_story_tasks,       # Get tasks under a story
+    get_task_progress,     # Completion stats
+    get_epic_tasks,        # Epics with nested stories
+    get_story_tasks,       # Tasks under a story
     get_hierarchy_summary, # Count by level {epics, stories, tasks, bugs}
 )
 ```
@@ -325,9 +238,25 @@ from servers.project import (
 ```python
 from servers.code_graph import (
     sync_from_directory,        # Sync folder to Code Graph
-    get_class_dependencies_bfs, # BFS traversal for dependency context
-    get_file_structure,         # Get file's code structure
+    get_class_dependencies_bfs, # BFS dependency traversal
+    get_file_structure,         # File's code structure
 )
+```
+
+Supported languages:
+
+| Language | Extensions | Backend | Call Graph | Methods |
+|----------|------------|---------|------------|---------|
+| TypeScript | `.ts`, `.tsx` | Tree-sitter (regex fallback) | Yes | Yes |
+| JavaScript | `.js`, `.jsx` | Tree-sitter (regex fallback) | Yes | Yes |
+| Python | `.py` | Tree-sitter (regex fallback) | Yes | Yes |
+| Java | `.java` | Tree-sitter (regex fallback) | Yes | Yes |
+| Rust | `.rs` | Tree-sitter (regex fallback) | Yes | Yes |
+| Go | `.go` | Tree-sitter only | Yes | Yes |
+
+Install Tree-sitter for enhanced extraction (optional, regex fallback available):
+```bash
+pip install tree-sitter tree-sitter-python tree-sitter-javascript tree-sitter-typescript tree-sitter-java tree-sitter-rust tree-sitter-go
 ```
 
 ### Memory
@@ -341,74 +270,36 @@ from servers.memory import (
 )
 ```
 
-## Automated Workflow
+## CLI
 
-**Recipe + Dispatch Loop** — one command to generate tasks, auto-dispatch agents:
-
-```python
-from servers.recipes import recipe_unit_tests
-from servers.facade import get_next_dispatch
-
-# 1. Recipe auto-analyzes project, builds task tree
-result = recipe_unit_tests('my-project', '/path/to/project')
-print(result['message'])  # "Created 12 test tasks across 8 files."
-
-# 2. Dispatch loop — repeat until done
-while True:
-    inst = get_next_dispatch(result['epic_id'], 'my-project', '/path/to/project')
-    if inst['action'] != 'dispatch':
-        print(inst['message'])
-        break
-    # Claude Code: dispatch via Task tool
-    Task(subagent_type=inst['subagent_type'], prompt=inst['prompt'])
-    # Other platforms: execute inst['prompt'] in context
+```bash
+python cli/main.py <command>
 ```
 
-**Available Recipes**: `unit_tests` (more coming)
-
-**`get_next_dispatch()` handles automatically**:
-- Executor → Critic validation loop (idempotent, no duplicate critics)
-- Rejected → retry with feedback context
-- All done → Memory agent stores lessons
-- Returns `model_tier` for platform-specific model selection
+| Command | Description |
+|---------|-------------|
+| `doctor` | Diagnose system status |
+| `sync` | Sync Code Graph from source files |
+| `status` | Show project status overview |
+| `init` | Initialize project for HAN |
+| `drift` | Check SSOT vs Code drift |
+| `install-hooks` | Install Git hooks for auto-sync |
+| `ssot-sync` | Sync SSOT Index to Graph |
+| `graph` | Query and explore the SSOT Graph |
+| `dashboard` | Show full system dashboard |
 
 ## Scripts
-
-Run from inside the han-agents directory:
 
 ```bash
 cd <path-to-han-agents>
 
-# Install/update agents, hooks, and database
-python scripts/install.py --skip-prompts
-
-# Diagnostics (verify installation)
-python scripts/doctor.py
-
-# Sync Code Graph for a project
-python scripts/sync.py /path/to/project
-
-# Initialize project (sync + detect tech stack)
-python scripts/init_project.py my-project /path/to/project
+python scripts/install.py --skip-prompts  # Install/update
+python scripts/doctor.py                  # Verify installation
+python scripts/sync.py /path/to/project   # Sync Code Graph
+python scripts/init_project.py my-project /path/to/project  # Init project
 ```
 
-## Documentation
-
-- [SKILL.md](SKILL.md) - Main skill definition
-- [reference/API_REFERENCE.md](reference/API_REFERENCE.md) - Complete API documentation
-- [reference/WORKFLOW_GUIDE.md](reference/WORKFLOW_GUIDE.md) - Workflow patterns
-- [reference/GRAPH_GUIDE.md](reference/GRAPH_GUIDE.md) - Graph operations
-- [reference/TROUBLESHOOTING.md](reference/TROUBLESHOOTING.md) - Common issues
-
-## Database
-
-SQLite database at `<han-agents>/brain/brain.db` (auto-created on first use)
-
-Schema: [brain/schema.sql](brain/schema.sql)
-
 ## Compatibility
-
-### Supported Platforms
 
 | Platform | Skills Directory | Scope |
 |----------|-----------------|-------|
@@ -419,9 +310,7 @@ Schema: [brain/schema.sql](brain/schema.sql)
 | [Codex CLI](https://developers.openai.com/codex) | `~/.codex/skills/` or `.codex/skills/` | Global / Project |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `.gemini/skills/` | Project |
 | [Antigravity](https://antigravity.google) | `~/.antigravity/skills/` or `.antigravity/skills/` | Global / Project |
-| [Kiro](https://kiro.dev) | Powers system (one-click install) | - |
-
-### Feature Support
+| [Kiro](https://kiro.dev) | Powers system (one-click install) | — |
 
 | Feature | Claude Code | Other Platforms |
 |---------|-------------|-----------------|
@@ -430,12 +319,29 @@ Schema: [brain/schema.sql](brain/schema.sql)
 | Task Lifecycle Management | ✅ Full | ✅ Full |
 | Multi-Agent Coordination | ✅ Native (Task tool) | ⚠️ Sequential |
 
-> **Note**: Claude Code's Task tool enables true parallel agent execution with isolated contexts. Other platforms can use all APIs but run agents sequentially in shared context.
+> Claude Code's Task tool enables parallel agent execution with isolated contexts. Other platforms run agents sequentially in shared context.
+
+## Documentation
+
+- [SKILL.md](SKILL.md) — Main skill definition
+- [reference/API_REFERENCE.md](reference/API_REFERENCE.md) — Complete API documentation
+- [reference/WORKFLOW_GUIDE.md](reference/WORKFLOW_GUIDE.md) — Workflow patterns
+- [reference/GRAPH_GUIDE.md](reference/GRAPH_GUIDE.md) — Graph operations
+- [reference/TROUBLESHOOTING.md](reference/TROUBLESHOOTING.md) — Common issues
+- [docs/QUICKSTART_HANDOVER.md](docs/QUICKSTART_HANDOVER.md) — Quick start handover guide
+- [docs/WHITEPAPER.md](docs/WHITEPAPER.md) — Architecture whitepaper
+
+## Database
+
+SQLite at `<han-agents>/brain/brain.db` (auto-created on first use).
+
+- Schema: [brain/schema.sql](brain/schema.sql)
+- Example: `brain/brain.example.db` — reference database for testing
 
 ## Requirements
 
 - Python 3.8+
-- SQLite 3.35+ (with FTS5 support)
+- SQLite 3.9+ (FTS5 support required)
 
 ## License
 

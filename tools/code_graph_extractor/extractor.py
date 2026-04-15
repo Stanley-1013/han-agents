@@ -117,6 +117,12 @@ def get_supported_languages() -> List[str]:
     """取得支援的語言列表"""
     return list(set(SUPPORTED_EXTENSIONS.values()))
 
+def normalize_file_path(file_path: str, project_root: Optional[str] = None) -> str:
+    """Normalize to project-relative POSIX-style path for stable IDs and DB keys."""
+    if project_root:
+        file_path = os.path.relpath(file_path, project_root)
+    return Path(file_path).as_posix()
+
 def compute_file_hash(file_path: str) -> str:
     """計算檔案內容 hash"""
     with open(file_path, 'rb') as f:
@@ -1631,12 +1637,13 @@ class RegexExtractor:
 # Main API
 # =============================================================================
 
-def extract_from_file(file_path: str) -> ExtractionResult:
+def extract_from_file(file_path: str, project_root: Optional[str] = None) -> ExtractionResult:
     """
     從單一檔案提取程式碼結構
 
     Args:
-        file_path: 檔案路徑
+        file_path: 檔案路徑（absolute）
+        project_root: 專案根目錄（用於正規化為 relative path）
 
     Returns:
         ExtractionResult 包含 nodes 和 edges
@@ -1663,16 +1670,23 @@ def extract_from_file(file_path: str) -> ExtractionResult:
             errors=[f"Failed to read file: {str(e)}"]
         )
 
-    # 使用 Regex extractor（fallback）
-    # TODO: 當 Tree-sitter 可用時，優先使用
+    logical_path = normalize_file_path(file_path, project_root)
+
+    # Try backend registry first (supports Tree-sitter + future backends)
+    from tools.code_graph_extractor.backends import get_backend
+    backend = get_backend(language)
+    if backend is not None:
+        return backend.extract_language(content, logical_path, language, abs_file_path=file_path)
+
+    # Direct fallback for unregistered languages (legacy path)
     if language in ('typescript', 'javascript'):
-        return RegexExtractor.extract_typescript(content, file_path)
+        return RegexExtractor.extract_typescript(content, logical_path)
     elif language == 'python':
-        return RegexExtractor.extract_python(content, file_path)
+        return RegexExtractor.extract_python(content, logical_path)
     elif language == 'java':
-        return RegexExtractor.extract_java(content, file_path)
+        return RegexExtractor.extract_java(content, logical_path)
     elif language == 'rust':
-        return RegexExtractor.extract_rust(content, file_path)
+        return RegexExtractor.extract_rust(content, logical_path)
     else:
         return ExtractionResult(
             file_path=file_path,
@@ -1726,27 +1740,28 @@ def extract_from_directory(
 
     # 遍歷目錄
     for root, dirs, files in os.walk(directory):
+        dirs.sort()
+        files.sort()
         # 跳過忽略的目錄
         dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
 
         for filename in files:
-            ext = os.path.splitext(filename)[1].lower()
-            if ext not in SUPPORTED_EXTENSIONS:
+            abs_path = os.path.join(root, filename)
+            if detect_language(abs_path) is None:
                 continue
 
-            file_path = os.path.join(root, filename)
-            rel_path = os.path.relpath(file_path, directory)
+            rel_path = normalize_file_path(abs_path, directory)
 
             # 增量檢查
             if incremental:
-                current_hash = compute_file_hash(file_path)
+                current_hash = compute_file_hash(abs_path)
                 if rel_path in file_hashes and file_hashes[rel_path] == current_hash:
                     files_skipped += 1
                     new_hashes[rel_path] = current_hash
                     continue
 
-            # 提取
-            result = extract_from_file(file_path)
+            # 提取（傳入 project_root 確保 node ID 使用 relative path）
+            result = extract_from_file(abs_path, project_root=directory)
 
             if result.errors:
                 errors.extend(result.errors)

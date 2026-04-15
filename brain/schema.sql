@@ -280,9 +280,12 @@ CREATE TABLE IF NOT EXISTS file_hashes (
 CREATE INDEX IF NOT EXISTS idx_code_nodes_project ON code_nodes(project);
 CREATE INDEX IF NOT EXISTS idx_code_nodes_kind ON code_nodes(kind);
 CREATE INDEX IF NOT EXISTS idx_code_nodes_file ON code_nodes(file_path);
+CREATE INDEX IF NOT EXISTS idx_code_nodes_project_file ON code_nodes(project, file_path);
 CREATE INDEX IF NOT EXISTS idx_code_edges_project ON code_edges(project);
 CREATE INDEX IF NOT EXISTS idx_code_edges_from ON code_edges(from_id);
 CREATE INDEX IF NOT EXISTS idx_code_edges_to ON code_edges(to_id);
+CREATE INDEX IF NOT EXISTS idx_code_edges_project_from_kind ON code_edges(project, from_id, kind);
+CREATE INDEX IF NOT EXISTS idx_code_edges_project_to_kind ON code_edges(project, to_id, kind);
 CREATE INDEX IF NOT EXISTS idx_file_hashes_project ON file_hashes(project);
 
 -- FTS 觸發器
