@@ -702,7 +702,7 @@ CPP_PACK = LanguageQueryPack(
     interface_types=[],
     import_types=['preproc_include'],
     call_types=['call_expression'],
-    type_alias_types=['type_definition', 'alias_declaration'],
+    type_alias_types=[],  # handled directly: type_definition → _handle_c_typedef; alias_declaration → _handle_cpp_alias
     constant_types=['preproc_def', 'declaration'],
     module_types=['namespace_definition'],
     extract_class=_cpp_extract_class,
@@ -803,6 +803,24 @@ class ASTWalker:
         if self.pack.language in ('c', 'cpp') and node_type == 'type_definition':
             self._handle_c_typedef(node)
             # continue recursing to find inner struct_specifier
+
+        # C++ qualified out-of-class method: `void Bar::bye() {...}`
+        if self.pack.language == 'cpp' and node_type == 'function_definition':
+            decl = node.child_by_field_name('declarator')
+            inner = decl
+            # function_declarator inside pointer/reference wrappers
+            while inner is not None and inner.type != 'function_declarator':
+                inner = inner.child_by_field_name('declarator')
+            if inner is not None:
+                decl_name = inner.child_by_field_name('declarator')
+                if decl_name is not None and decl_name.type == 'qualified_identifier':
+                    self._handle_cpp_qualified_method(node, decl_name)
+                    return  # don't fall through to generic function handler
+
+        # C++ alias_declaration: using Foo = int;
+        if self.pack.language == 'cpp' and node_type == 'alias_declaration':
+            self._handle_cpp_alias(node)
+            return
 
         # Class types
         if node_type in self.pack.class_types and self.pack.extract_class:
@@ -1115,17 +1133,24 @@ class ASTWalker:
 
         # Determine caller context
         caller_id = make_node_id('file', self.file_path)
-        if self._class_stack:
-            class_name = self._class_stack[-1][0]
-            # Try to find enclosing function
-            parent = node.parent
-            while parent:
-                if parent.type in (self.pack.function_types + self.pack.method_types):
-                    fname = parent.child_by_field_name('name')
-                    if fname:
-                        caller_id = make_node_id('function', self.file_path, f"{class_name}.{fname.text.decode()}")
-                    break
-                parent = parent.parent
+        parent = node.parent
+        while parent:
+            if parent.type in (self.pack.function_types + self.pack.method_types):
+                if self.pack.language in ('c', 'cpp'):
+                    decl = parent.child_by_field_name('declarator')
+                    raw = _c_declarator_name(decl) if decl else ''
+                    fname_text = raw.split('::')[-1] if raw else ''
+                else:
+                    fname_node = parent.child_by_field_name('name')
+                    fname_text = fname_node.text.decode() if fname_node else ''
+                if fname_text:
+                    if self._class_stack:
+                        class_name = self._class_stack[-1][0]
+                        caller_id = make_node_id('function', self.file_path, f"{class_name}.{fname_text}")
+                    else:
+                        caller_id = make_node_id('function', self.file_path, fname_text)
+                break
+            parent = parent.parent
 
         confidence = 1.0 if '.' not in target else 0.9
         self.edges.append(CodeEdge(
@@ -1203,6 +1228,12 @@ class ASTWalker:
             visibility='public',
         )
         self.nodes.append(code_node)
+        self.edges.append(CodeEdge(
+            from_id=make_node_id('file', self.file_path),
+            to_id=node_id,
+            kind='defines',
+            line_number=node.start_point[0] + 1,
+        ))
 
     def _handle_module(self, node):
         if not self.pack.extract_module:
@@ -1339,12 +1370,97 @@ class ASTWalker:
             kind='defines',
             line_number=node.start_point[0] + 1,
         ))
-        # Recurse into struct body with struct context (for C++ methods)
+        # C++ struct supports inheritance — emit extends edges
         if self.pack.language == 'cpp':
+            for child in node.children:
+                if child.type == 'base_class_clause':
+                    for c in child.named_children:
+                        if c.type in ('type_identifier', 'qualified_identifier', 'template_type'):
+                            self.edges.append(CodeEdge(
+                                from_id=node_id,
+                                to_id=f"class.{c.text.decode()}",
+                                kind='extends',
+                                line_number=node.start_point[0] + 1,
+                                confidence=0.8,
+                            ))
+            # Recurse into struct body with struct context (for C++ methods)
             self._class_stack.append((name, 'struct'))
             for child in node.children:
                 self._visit(child)
             self._class_stack.pop()
+
+    def _handle_cpp_qualified_method(self, node, qualified_name_node):
+        """C++ out-of-class method: `void Bar::bye() {...}` → method under class Bar."""
+        qname = qualified_name_node.text.decode()
+        if '::' not in qname:
+            return
+        class_name, _, method_name = qname.rpartition('::')
+        # Drop leading `namespace::` if multiple — keep last qualifier as class
+        class_simple = class_name.rsplit('::', 1)[-1]
+
+        sig = '()'
+        # find function_declarator parameters
+        decl = node.child_by_field_name('declarator')
+        inner = decl
+        while inner is not None and inner.type != 'function_declarator':
+            inner = inner.child_by_field_name('declarator')
+        if inner is not None:
+            params = inner.child_by_field_name('parameters')
+            if params:
+                sig = params.text.decode()
+
+        node_id = make_node_id('function', self.file_path, f"{class_simple}.{method_name}")
+        code_node = CodeNode(
+            id=node_id,
+            kind='function',
+            name=method_name,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            signature=f"{class_simple}::{method_name}{sig}",
+            language='cpp',
+            visibility='public',
+        )
+        self.nodes.append(code_node)
+        # contains edge from class/struct → method
+        self.edges.append(CodeEdge(
+            from_id=make_node_id('class', self.file_path, class_simple),
+            to_id=node_id,
+            kind='contains',
+            line_number=node.start_point[0] + 1,
+            confidence=0.9,
+        ))
+        # Push class context for call graph attribution
+        self._class_stack.append((class_simple, 'class'))
+        for child in node.children:
+            self._visit(child)
+        self._class_stack.pop()
+
+    def _handle_cpp_alias(self, node):
+        """C++ alias_declaration: `using Foo = int;` → kind='type'."""
+        name_node = node.child_by_field_name('name')
+        if not name_node:
+            return
+        name = name_node.text.decode()
+        node_id = make_node_id('type', self.file_path, name)
+        code_node = CodeNode(
+            id=node_id,
+            kind='type',
+            name=name,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            signature=f"using {name}",
+            language='cpp',
+            visibility='public',
+        )
+        self.nodes.append(code_node)
+        self.edges.append(CodeEdge(
+            from_id=make_node_id('file', self.file_path),
+            to_id=node_id,
+            kind='defines',
+            line_number=node.start_point[0] + 1,
+        ))
 
     def _handle_c_typedef(self, node):
         """C/C++ typedef → emit a type node; inner struct is handled separately."""

@@ -1678,6 +1678,14 @@ def extract_from_file(file_path: str, project_root: Optional[str] = None) -> Ext
             errors=[f"Failed to read file: {str(e)}"]
         )
 
+    # Heuristic: .h may be C or C++ — peek content for C++ markers
+    if language == 'c' and file_path.endswith('.h'):
+        head = content[:8192]
+        cpp_markers = ('class ', 'namespace ', 'template<', 'template <',
+                       'public:', 'private:', 'protected:', '::', 'using namespace')
+        if any(m in head for m in cpp_markers):
+            language = 'cpp'
+
     logical_path = normalize_file_path(file_path, project_root)
 
     # Try backend registry first (supports Tree-sitter + future backends)
