@@ -253,10 +253,12 @@ Supported languages:
 | Java | `.java` | Tree-sitter (regex fallback) | Yes | Yes |
 | Rust | `.rs` | Tree-sitter (regex fallback) | Yes | Yes |
 | Go | `.go` | Tree-sitter only | Yes | Yes |
+| C | `.c`, `.h` | Tree-sitter only | Yes | — |
+| C++ | `.cpp`, `.cc`, `.cxx`, `.hpp`, `.hh`, `.hxx` | Tree-sitter only | Yes | Yes |
 
-Install Tree-sitter for enhanced extraction (optional, regex fallback available):
+Install Tree-sitter for enhanced extraction (optional, regex fallback available for TS/JS/Python/Java/Rust):
 ```bash
-pip install tree-sitter tree-sitter-python tree-sitter-javascript tree-sitter-typescript tree-sitter-java tree-sitter-rust tree-sitter-go
+pip install tree-sitter tree-sitter-python tree-sitter-javascript tree-sitter-typescript tree-sitter-java tree-sitter-rust tree-sitter-go tree-sitter-c tree-sitter-cpp
 ```
 
 ### Memory

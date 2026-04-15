@@ -141,6 +141,16 @@ LANGUAGE_CONFIGS = {
         'preferred_backend': 'tree_sitter',
         'fallback_backend': None,  # no regex fallback for Go
     },
+    'c': {
+        'extensions': ['.c', '.h'],
+        'preferred_backend': 'tree_sitter',
+        'fallback_backend': None,  # tree-sitter only
+    },
+    'cpp': {
+        'extensions': ['.cpp', '.cc', '.cxx', '.hpp', '.hh', '.hxx'],
+        'preferred_backend': 'tree_sitter',
+        'fallback_backend': None,  # tree-sitter only
+    },
 }
 
 

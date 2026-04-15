@@ -94,6 +94,14 @@ SUPPORTED_EXTENSIONS = {
     '.go': 'go',
     '.java': 'java',
     '.rs': 'rust',
+    '.c': 'c',
+    '.h': 'c',
+    '.cpp': 'cpp',
+    '.cc': 'cpp',
+    '.cxx': 'cpp',
+    '.hpp': 'cpp',
+    '.hh': 'cpp',
+    '.hxx': 'cpp',
 }
 
 # 忽略的目錄

@@ -33,7 +33,7 @@ result = sync('/path/to/project', 'my-project', incremental=True)
 `imports`, `calls`, `extends`, `implements`, `contains`, `defines`
 
 ### Supported Languages
-TypeScript/JavaScript, Python, Java, Rust, Go
+TypeScript/JavaScript, Python, Java, Rust, Go, C, C++
 
 ### Parser Backends
 - **Tree-sitter** (priority): Accurate AST parsing with call graph + method extraction

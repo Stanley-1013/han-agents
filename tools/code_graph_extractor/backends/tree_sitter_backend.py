@@ -2,7 +2,7 @@
 Tree-sitter AST-based Extractor Backend
 
 Accurate multi-language code extraction using Tree-sitter AST parsing.
-Supports: Python, TypeScript/JavaScript, Go, Java, Rust
+Supports: Python, TypeScript/JavaScript, Go, Java, Rust, C, C++
 
 Advantages over regex:
 - Class method extraction
@@ -44,6 +44,8 @@ def _load_grammar(language: str) -> Optional[tree_sitter.Language]:
         'java': ('tree_sitter_java', 'language'),
         'rust': ('tree_sitter_rust', 'language'),
         'go': ('tree_sitter_go', 'language'),
+        'c': ('tree_sitter_c', 'language'),
+        'cpp': ('tree_sitter_cpp', 'language'),
     }
 
     spec = loader_map.get(language)
@@ -570,6 +572,149 @@ RUST_PACK = LanguageQueryPack(
 
 
 # =============================================================================
+# C Query Pack
+# =============================================================================
+
+def _c_declarator_name(node):
+    """Walk function_declarator/pointer_declarator/array_declarator to find identifier."""
+    if node is None:
+        return ''
+    t = node.type
+    if t in ('identifier', 'type_identifier', 'field_identifier'):
+        return node.text.decode()
+    if t == 'qualified_identifier':
+        # C++ Bar::hello → return full qualified name
+        return node.text.decode()
+    # walk common wrappers
+    inner = node.child_by_field_name('declarator')
+    if inner:
+        return _c_declarator_name(inner)
+    for child in node.named_children:
+        name = _c_declarator_name(child)
+        if name:
+            return name
+    return ''
+
+
+def _c_extract_function(node) -> Dict:
+    """Extract C/C++ function_definition."""
+    decl = node.child_by_field_name('declarator')
+    name = _c_declarator_name(decl)
+    # parameters are under function_declarator
+    sig = '()'
+    if decl:
+        params = decl.child_by_field_name('parameters')
+        if params:
+            sig = params.text.decode()
+    return {
+        'name': name,
+        'signature': sig,
+        'is_async': False,
+    }
+
+
+def _c_extract_import(node) -> Dict:
+    """Extract #include directive."""
+    text = node.text.decode()
+    module = ''
+    for child in node.children:
+        if child.type in ('system_lib_string', 'string_literal'):
+            module = child.text.decode().strip('<>"')
+            break
+    return {'module': module, 'names': [], 'text': text}
+
+
+def _c_extract_constant(node) -> Optional[Dict]:
+    """Extract #define NAME or static const TYPE NAME = ..."""
+    if node.type == 'preproc_def':
+        name_node = node.child_by_field_name('name')
+        if name_node:
+            return {'name': name_node.text.decode()}
+        return None
+    if node.type == 'declaration':
+        # check for const qualifier
+        has_const = any(c.type == 'type_qualifier' and b'const' in c.text for c in node.children)
+        if not has_const:
+            return None
+        for child in node.named_children:
+            if child.type == 'init_declarator':
+                name = _c_declarator_name(child.child_by_field_name('declarator'))
+                if name:
+                    return {'name': name}
+    return None
+
+
+C_PACK = LanguageQueryPack(
+    language='c',
+    class_types=[],
+    function_types=['function_definition'],
+    method_types=[],
+    interface_types=[],
+    import_types=['preproc_include'],
+    call_types=['call_expression'],
+    type_alias_types=[],
+    constant_types=['preproc_def', 'declaration'],
+    module_types=[],
+    extract_function=_c_extract_function,
+    extract_import=_c_extract_import,
+    extract_constant=_c_extract_constant,
+)
+
+
+# =============================================================================
+# C++ Query Pack
+# =============================================================================
+
+def _cpp_extract_class(node) -> Dict:
+    """Extract class_specifier / struct_specifier (C++ uses struct like class)."""
+    name_node = node.child_by_field_name('name')
+    bases = []
+    for child in node.children:
+        if child.type == 'base_class_clause':
+            for c in child.named_children:
+                if c.type in ('type_identifier', 'qualified_identifier', 'template_type'):
+                    bases.append(c.text.decode())
+    return {
+        'name': name_node.text.decode() if name_node else '',
+        'bases': bases,
+    }
+
+
+def _cpp_extract_module(node) -> Dict:
+    """Extract namespace_definition → module-like."""
+    name_node = node.child_by_field_name('name')
+    return {
+        'name': name_node.text.decode() if name_node else '<anonymous>',
+        'path': name_node.text.decode() if name_node else '',
+    }
+
+
+def _cpp_detect_visibility(name: str, node=None, **kwargs) -> str:
+    # C++ visibility is lexically scoped via access_specifier labels — default public
+    return 'public'
+
+
+CPP_PACK = LanguageQueryPack(
+    language='cpp',
+    class_types=['class_specifier'],
+    function_types=['function_definition'],
+    method_types=[],
+    interface_types=[],
+    import_types=['preproc_include'],
+    call_types=['call_expression'],
+    type_alias_types=['type_definition', 'alias_declaration'],
+    constant_types=['preproc_def', 'declaration'],
+    module_types=['namespace_definition'],
+    extract_class=_cpp_extract_class,
+    extract_function=_c_extract_function,  # reuse C function extractor
+    extract_import=_c_extract_import,
+    extract_constant=_c_extract_constant,
+    extract_module=_cpp_extract_module,
+    detect_visibility=_cpp_detect_visibility,
+)
+
+
+# =============================================================================
 # Query Pack Registry
 # =============================================================================
 
@@ -580,6 +725,8 @@ QUERY_PACKS: Dict[str, LanguageQueryPack] = {
     'java': JAVA_PACK,
     'rust': RUST_PACK,
     'go': GO_PACK,
+    'c': C_PACK,
+    'cpp': CPP_PACK,
 }
 
 
@@ -647,6 +794,16 @@ class ASTWalker:
             self._handle_rust_struct(node)
             handled = True
 
+        # C/C++ special: struct_specifier → kind='struct'
+        if self.pack.language in ('c', 'cpp') and node_type == 'struct_specifier':
+            self._handle_c_struct(node)
+            handled = True
+
+        # C typedef → constant/type alias
+        if self.pack.language in ('c', 'cpp') and node_type == 'type_definition':
+            self._handle_c_typedef(node)
+            # continue recursing to find inner struct_specifier
+
         # Class types
         if node_type in self.pack.class_types and self.pack.extract_class:
             self._handle_class(node)
@@ -692,6 +849,9 @@ class ASTWalker:
             is_top_level = parent and parent.type in (
                 'module', 'program', 'source_file',  # Python, TS/JS, Go/Rust/Java
                 'export_statement',  # TS export const
+                'translation_unit',  # C/C++ root
+                'declaration_list',  # C++ namespace body
+                'linkage_specification',  # extern "C" { ... }
             )
             if is_top_level:
                 self._handle_constant(node)
@@ -1143,6 +1303,73 @@ class ASTWalker:
         )
         self.nodes.append(code_node)
 
+        self.edges.append(CodeEdge(
+            from_id=make_node_id('file', self.file_path),
+            to_id=node_id,
+            kind='defines',
+            line_number=node.start_point[0] + 1,
+        ))
+
+    def _handle_c_struct(self, node):
+        """C/C++ struct_specifier → kind='struct'. Skip anonymous or forward decls."""
+        name_node = node.child_by_field_name('name')
+        if not name_node:
+            return  # anonymous struct
+        # Skip forward declarations (no body)
+        body = node.child_by_field_name('body')
+        if not body:
+            return
+        name = name_node.text.decode()
+        node_id = make_node_id('struct', self.file_path, name)
+        code_node = CodeNode(
+            id=node_id,
+            kind='struct',
+            name=name,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            signature=f"struct {name}",
+            language=self.pack.language,
+            visibility='public',
+        )
+        self.nodes.append(code_node)
+        self.edges.append(CodeEdge(
+            from_id=make_node_id('file', self.file_path),
+            to_id=node_id,
+            kind='defines',
+            line_number=node.start_point[0] + 1,
+        ))
+        # Recurse into struct body with struct context (for C++ methods)
+        if self.pack.language == 'cpp':
+            self._class_stack.append((name, 'struct'))
+            for child in node.children:
+                self._visit(child)
+            self._class_stack.pop()
+
+    def _handle_c_typedef(self, node):
+        """C/C++ typedef → emit a type node; inner struct is handled separately."""
+        # typedef struct Foo {...} FooAlias;  → emit alias as kind='type'
+        # The last identifier child is the alias name
+        alias_name = None
+        for child in reversed(node.named_children):
+            if child.type == 'type_identifier':
+                alias_name = child.text.decode()
+                break
+        if not alias_name:
+            return
+        node_id = make_node_id('type', self.file_path, alias_name)
+        code_node = CodeNode(
+            id=node_id,
+            kind='type',
+            name=alias_name,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            signature=f"typedef {alias_name}",
+            language=self.pack.language,
+            visibility='public',
+        )
+        self.nodes.append(code_node)
         self.edges.append(CodeEdge(
             from_id=make_node_id('file', self.file_path),
             to_id=node_id,
