@@ -107,6 +107,92 @@ void app::Derived::bye() {
     )
 
 
+def test_cpp_namespace_free_function_not_method():
+    """Regression: `namespace ns { void f(); } void ns::f() {}` must NOT
+    create a `contains class.ns -> function.ns.f` edge."""
+    src = '''
+namespace ns {
+    void f();
+}
+
+void ns::f() {}
+'''
+    r = _BACKEND.extract(src, 'ns.cpp')
+    edges = _edges(r)
+    # No contains edge from a bogus "class ns"
+    assert not any(
+        e[1] == 'contains' and 'class.' in e[0] and 'ns' in e[0]
+        for e in edges
+    ), f"free function wrongly attached as method: {edges}"
+    # Function should exist as a plain defines from file
+    assert any(
+        e[1] == 'defines' and e[2].startswith('function.ns.cpp') and 'f' in e[2]
+        for e in edges
+    )
+
+
+def test_cpp_struct_out_of_class_method_uses_struct_kind():
+    """Regression: out-of-class method on a struct must attach via
+    `contains struct.<file>:S -> function.<file>:S.m`, not class.*"""
+    src = '''
+struct S {
+    void m();
+};
+
+void S::m() {}
+'''
+    r = _BACKEND.extract(src, 'st.cpp')
+    edges = _edges(r)
+    assert ('struct.st.cpp:S', 'contains', 'function.st.cpp:S.m') in edges
+    # Must NOT produce the wrong class.* edge
+    assert not any(
+        e == ('class.st.cpp:S', 'contains', 'function.st.cpp:S.m')
+        for e in edges
+    )
+
+
+def test_cpp_struct_extends_struct_uses_struct_kind():
+    """Regression: struct inheriting a struct should emit `extends struct.<Base>`."""
+    src = '''
+struct Base {};
+struct Derived : public Base {};
+'''
+    r = _BACKEND.extract(src, 'inh.cpp')
+    edges = _edges(r)
+    assert ('struct.inh.cpp:Derived', 'extends', 'struct.Base') in edges
+
+
+def test_h_heuristic_ignores_cpp_tokens_in_macros_and_comments():
+    """Regression: .h with `::` only in macro bodies/comments/strings
+    must NOT be upgraded to C++."""
+    import os
+    import tempfile
+    from tools.code_graph_extractor.extractor import extract_from_file
+
+    pure_c = '''
+// cross-reference: see Foo::bar in docs
+#define NS_JOIN(a, b) a::b
+const char *msg = "class Foo is cool";
+int plain_c_var;
+'''
+    real_cpp = '''
+class Foo {
+public:
+    void m();
+};
+'''
+    with tempfile.TemporaryDirectory() as td:
+        p1 = os.path.join(td, 'pure.h')
+        with open(p1, 'w') as f:
+            f.write(pure_c)
+        assert extract_from_file(p1).language == 'c'
+
+        p2 = os.path.join(td, 'real.h')
+        with open(p2, 'w') as f:
+            f.write(real_cpp)
+        assert extract_from_file(p2).language == 'cpp'
+
+
 def test_cpp_alias_declaration():
     src = '''
 using Foo = int;

@@ -1678,12 +1678,25 @@ def extract_from_file(file_path: str, project_root: Optional[str] = None) -> Ext
             errors=[f"Failed to read file: {str(e)}"]
         )
 
-    # Heuristic: .h may be C or C++ — peek content for C++ markers
+    # Heuristic: .h may be C or C++ — peek content for C++ markers.
+    # Strip comments/strings first to avoid false positives from macros/docs.
     if language == 'c' and file_path.endswith('.h'):
         head = content[:8192]
-        cpp_markers = ('class ', 'namespace ', 'template<', 'template <',
-                       'public:', 'private:', 'protected:', '::', 'using namespace')
-        if any(m in head for m in cpp_markers):
+        stripped = re.sub(r'/\*.*?\*/', ' ', head, flags=re.DOTALL)
+        stripped = re.sub(r'//[^\n]*', ' ', stripped)
+        stripped = re.sub(r'"(?:\\.|[^"\\])*"', ' ', stripped)
+        stripped = re.sub(r"'(?:\\.|[^'\\])*'", ' ', stripped)
+        # Drop preprocessor #define bodies (single-line only — keep it simple)
+        stripped = re.sub(r'^\s*#\s*define\s+\w+.*$', ' ', stripped, flags=re.MULTILINE)
+        cpp_patterns = (
+            r'\bclass\s+\w',
+            r'\bnamespace\s+\w',
+            r'\btemplate\s*<',
+            r'\b(?:public|private|protected)\s*:',
+            r'\busing\s+namespace\b',
+            r'\busing\s+\w+\s*=',
+        )
+        if any(re.search(p, stripped) for p in cpp_patterns):
             language = 'cpp'
 
     logical_path = normalize_file_path(file_path, project_root)

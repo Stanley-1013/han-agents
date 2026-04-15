@@ -748,6 +748,7 @@ class ASTWalker:
         self.edges: List[CodeEdge] = []
         self._class_stack: List[tuple] = []  # [(name, kind)] track nested class context
         self._impl_type: Optional[str] = None  # for Rust impl blocks
+        self._known_classes: Dict[str, str] = {}  # simple_name -> kind ('class'|'struct'|'interface')
 
     def walk(self, root_node) -> ExtractionResult:
         """Walk the AST and extract all code structure."""
@@ -805,17 +806,22 @@ class ASTWalker:
             # continue recursing to find inner struct_specifier
 
         # C++ qualified out-of-class method: `void Bar::bye() {...}`
+        # Only dispatch if qualifier matches a known class/struct — otherwise it's
+        # a namespace-qualified free function and should fall through to _handle_function.
         if self.pack.language == 'cpp' and node_type == 'function_definition':
             decl = node.child_by_field_name('declarator')
             inner = decl
-            # function_declarator inside pointer/reference wrappers
             while inner is not None and inner.type != 'function_declarator':
                 inner = inner.child_by_field_name('declarator')
             if inner is not None:
                 decl_name = inner.child_by_field_name('declarator')
                 if decl_name is not None and decl_name.type == 'qualified_identifier':
-                    self._handle_cpp_qualified_method(node, decl_name)
-                    return  # don't fall through to generic function handler
+                    qname = decl_name.text.decode()
+                    class_name, _, _ = qname.rpartition('::')
+                    class_simple = class_name.rsplit('::', 1)[-1]
+                    if class_simple in self._known_classes:
+                        self._handle_cpp_qualified_method(node, decl_name)
+                        return
 
         # C++ alias_declaration: using Foo = int;
         if self.pack.language == 'cpp' and node_type == 'alias_declaration':
@@ -906,6 +912,7 @@ class ASTWalker:
             visibility=visibility,
         )
         self.nodes.append(code_node)
+        self._known_classes[name] = 'class'
 
         # defines edge
         self.edges.append(CodeEdge(
@@ -917,9 +924,11 @@ class ASTWalker:
 
         # extends edges
         for base in info.get('bases', []):
+            base_simple = base.rsplit('::', 1)[-1]
+            base_kind = self._known_classes.get(base_simple, 'class')
             self.edges.append(CodeEdge(
                 from_id=node_id,
-                to_id=f"class.{base}",
+                to_id=f"{base_kind}.{base}",
                 kind='extends',
                 line_number=node.start_point[0] + 1,
                 confidence=0.8,
@@ -1364,6 +1373,7 @@ class ASTWalker:
             visibility='public',
         )
         self.nodes.append(code_node)
+        self._known_classes[name] = 'struct'
         self.edges.append(CodeEdge(
             from_id=make_node_id('file', self.file_path),
             to_id=node_id,
@@ -1376,9 +1386,12 @@ class ASTWalker:
                 if child.type == 'base_class_clause':
                     for c in child.named_children:
                         if c.type in ('type_identifier', 'qualified_identifier', 'template_type'):
+                            base_name = c.text.decode()
+                            base_simple = base_name.rsplit('::', 1)[-1]
+                            base_kind = self._known_classes.get(base_simple, 'class')
                             self.edges.append(CodeEdge(
                                 from_id=node_id,
-                                to_id=f"class.{c.text.decode()}",
+                                to_id=f"{base_kind}.{base_name}",
                                 kind='extends',
                                 line_number=node.start_point[0] + 1,
                                 confidence=0.8,
@@ -1409,6 +1422,7 @@ class ASTWalker:
             if params:
                 sig = params.text.decode()
 
+        container_kind = self._known_classes.get(class_simple, 'class')
         node_id = make_node_id('function', self.file_path, f"{class_simple}.{method_name}")
         code_node = CodeNode(
             id=node_id,
@@ -1424,14 +1438,14 @@ class ASTWalker:
         self.nodes.append(code_node)
         # contains edge from class/struct → method
         self.edges.append(CodeEdge(
-            from_id=make_node_id('class', self.file_path, class_simple),
+            from_id=make_node_id(container_kind, self.file_path, class_simple),
             to_id=node_id,
             kind='contains',
             line_number=node.start_point[0] + 1,
             confidence=0.9,
         ))
-        # Push class context for call graph attribution
-        self._class_stack.append((class_simple, 'class'))
+        # Push container context for call graph attribution
+        self._class_stack.append((class_simple, container_kind))
         for child in node.children:
             self._visit(child)
         self._class_stack.pop()
