@@ -11,7 +11,7 @@ Works with any AI coding agent that supports the [Agent Skills](https://agentski
 - **Automated Dispatch Loop** — `get_next_dispatch()` auto-orchestrates Executor → Critic → Memory pipeline
 - **Recipe System** — Pre-built workflows (e.g. `recipe_unit_tests()`) that auto-generate task trees
 - **Task Lifecycle** — Jira-like hierarchy (Epic → Story → Task → Bug) with create, execute, validate, and document
-- **Code Graph** — Tree-sitter AST + regex fallback, with call graph and method extraction (6 languages)
+- **Code Graph** — Tree-sitter AST + regex fallback, with call graph and method extraction (8 languages)
 - **Drift Detection** — Compare Skill definitions against actual code implementation
 - **Semantic Memory** — FTS5 + embedding-based search with LLM reranking
 - **Auto Tech Stack Detection** — `ensure_project()` auto-detects languages, frameworks, and test tools

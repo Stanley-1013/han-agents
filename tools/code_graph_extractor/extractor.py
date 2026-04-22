@@ -1800,6 +1800,18 @@ def extract_from_directory(
                 new_hashes[rel_path] = result.file_hash
                 files_processed += 1
 
+    # Phase 3: Cross-file resolution — resolve symbolic to_ids before returning
+    if all_nodes and all_edges:
+        try:
+            from tools.code_graph_extractor.resolver import resolve_edges
+            # Convert back to dataclass objects for resolver
+            node_objs = [CodeNode(**n) for n in all_nodes]
+            edge_objs = [CodeEdge(**e) for e in all_edges]
+            resolved, stats = resolve_edges(node_objs, edge_objs)
+            all_edges = [e.to_dict() for e in resolved]
+        except ImportError:
+            pass  # resolver not available — skip resolution
+
     return {
         'nodes': all_nodes,
         'edges': all_edges,
