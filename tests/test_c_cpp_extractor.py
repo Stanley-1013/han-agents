@@ -8,10 +8,11 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    from tools.code_graph_extractor.backends.tree_sitter_backend import TreeSitterBackend
+    from tools.code_graph_extractor.backends.tree_sitter_backend import TreeSitterBackend, _load_grammar
     _BACKEND = TreeSitterBackend()
-    _HAS_C = _BACKEND.can_handle('c')
-    _HAS_CPP = _BACKEND.can_handle('cpp')
+    # Check actual grammar availability, not just language support
+    _HAS_C = _load_grammar('c', auto_install=False) is not None
+    _HAS_CPP = _load_grammar('cpp', auto_install=False) is not None
 except ImportError:
     _HAS_C = _HAS_CPP = False
 

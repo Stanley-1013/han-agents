@@ -1702,10 +1702,16 @@ def extract_from_file(file_path: str, project_root: Optional[str] = None) -> Ext
     logical_path = normalize_file_path(file_path, project_root)
 
     # Try backend registry first (supports Tree-sitter + future backends)
-    from tools.code_graph_extractor.backends import get_backend
+    from tools.code_graph_extractor.backends import get_backend, get_fallback_backend
     backend = get_backend(language)
     if backend is not None:
-        return backend.extract_language(content, logical_path, language, abs_file_path=file_path)
+        result = backend.extract_language(content, logical_path, language, abs_file_path=file_path)
+        # If primary backend failed (e.g. grammar not installed), try fallback
+        if result.errors and not result.nodes:
+            fallback = get_fallback_backend(language, exclude=backend)
+            if fallback is not None:
+                return fallback.extract_language(content, logical_path, language, abs_file_path=file_path)
+        return result
 
     # Direct fallback for unregistered languages (legacy path)
     if language in ('typescript', 'javascript'):

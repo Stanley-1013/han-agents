@@ -32,18 +32,22 @@ except ImportError:
     _REGEX_BACKEND = None
 
 try:
-    from tools.code_graph_extractor.backends.tree_sitter_backend import TreeSitterBackend
+    from tools.code_graph_extractor.backends.tree_sitter_backend import TreeSitterBackend, _load_grammar
     _TS_BACKEND = TreeSitterBackend()
     _HAS_TS = True
 except ImportError:
     _HAS_TS = False
     _TS_BACKEND = None
+    _load_grammar = None
 
-_HAS_TS_TYPESCRIPT   = _HAS_TS and _TS_BACKEND.can_handle('typescript')
-_HAS_TS_JAVASCRIPT   = _HAS_TS and _TS_BACKEND.can_handle('javascript')
-_HAS_TS_PYTHON       = _HAS_TS and _TS_BACKEND.can_handle('python')
-_HAS_TS_JAVA         = _HAS_TS and _TS_BACKEND.can_handle('java')
-_HAS_TS_RUST         = _HAS_TS and _TS_BACKEND.can_handle('rust')
+# Use _load_grammar(auto_install=False) to check if grammars are actually installed,
+# not just supported. can_handle() returns True for supported languages even without
+# grammars installed (to allow auto-install on extract), but tests need actual grammars.
+_HAS_TS_TYPESCRIPT   = _HAS_TS and _load_grammar('typescript', auto_install=False) is not None
+_HAS_TS_JAVASCRIPT   = _HAS_TS and _load_grammar('javascript', auto_install=False) is not None
+_HAS_TS_PYTHON       = _HAS_TS and _load_grammar('python', auto_install=False) is not None
+_HAS_TS_JAVA         = _HAS_TS and _load_grammar('java', auto_install=False) is not None
+_HAS_TS_RUST         = _HAS_TS and _load_grammar('rust', auto_install=False) is not None
 
 
 # ---------------------------------------------------------------------------

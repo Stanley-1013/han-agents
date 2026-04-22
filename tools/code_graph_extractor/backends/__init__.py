@@ -90,6 +90,21 @@ def get_backend(language: str) -> Optional[ExtractorBackend]:
     return None
 
 
+def get_fallback_backend(language: str, exclude: ExtractorBackend = None) -> Optional[ExtractorBackend]:
+    """
+    Get a fallback backend for a language, skipping the excluded one.
+
+    Used when the primary backend (e.g. TreeSitter) fails at extraction time
+    (grammar not installed, HAN_NO_INSTALL=1, etc.) to fall back to regex.
+    """
+    for _priority, backend in _BACKENDS:
+        if backend is exclude:
+            continue
+        if backend.can_handle(language):
+            return backend
+    return None
+
+
 def list_backends() -> List[dict]:
     """List all registered backends with their capabilities."""
     return [

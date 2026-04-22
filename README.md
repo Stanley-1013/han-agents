@@ -76,22 +76,23 @@ Uses the **Powers** system — search for "han-agents" in Kiro's Powers panel or
 
 </details>
 
-### Step 2: Install
+### Step 2: Just Start
+
+That's it. No install script needed. On first use, han-agents automatically:
+- Creates the database (`brain/brain.db`)
+- Copies agent definitions to your platform's agents directory
+- Registers hooks (Claude Code only)
+- Installs tree-sitter grammars on demand (for enhanced code extraction)
+
+Set `HAN_NO_INSTALL=1` to disable auto-installation (CI/air-gapped environments).
+
+<details>
+<summary><b>Optional: manual install / advanced setup</b></summary>
 
 ```bash
 cd <path-to-han-agents>
 python scripts/install.py --skip-prompts
 ```
-
-The script auto-detects your platform and sets up database, agents, and hooks:
-
-| Platform | Database | Agents | Hooks |
-|----------|----------|--------|-------|
-| Claude Code | ✅ | ✅ `~/.claude/agents/` | ✅ PostToolUse |
-| Cursor | ✅ | ✅ `.cursor/agents/` | — |
-| Others | ✅ | — | — |
-
-Install options:
 
 | Flag | Description |
 |------|-------------|
@@ -102,7 +103,14 @@ Install options:
 | `--sync-graph` | Sync Code Graph |
 | `--reset` | Reset database |
 
-### Verify
+Pre-install tree-sitter grammars (optional, auto-installed on first use):
+```bash
+pip install -r requirements-ast.txt
+```
+
+</details>
+
+### Verify (optional)
 
 ```bash
 python scripts/doctor.py

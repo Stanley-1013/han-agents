@@ -17,7 +17,17 @@ import os
 from typing import Set, Optional, Dict, List, Any, Callable
 from dataclasses import dataclass, field
 
-import tree_sitter
+import sys
+import subprocess
+import threading
+import warnings
+
+try:
+    import tree_sitter
+    _HAS_TREE_SITTER = True
+except ImportError:
+    tree_sitter = None  # type: ignore[assignment]
+    _HAS_TREE_SITTER = False
 
 from tools.code_graph_extractor.extractor import (
     CodeNode, CodeEdge, ExtractionResult,
@@ -29,39 +39,136 @@ from tools.code_graph_extractor.extractor import (
 # Language Grammar Loaders (lazy)
 # =============================================================================
 
-_GRAMMAR_CACHE: Dict[str, tree_sitter.Language] = {}
+_GRAMMAR_CACHE: Dict[str, Any] = {}  # maps language -> tree_sitter.Language or None (permanent failure)
+_GRAMMAR_LOCK = threading.Lock()
+
+# Set HAN_NO_INSTALL=1 to disable auto-installation (for CI/air-gapped environments)
+_AUTO_INSTALL_ENABLED = os.environ.get('HAN_NO_INSTALL', '').lower() not in ('1', 'true', 'yes')
+
+# Package names for pip install
+_PIP_GRAMMAR_PACKAGES: Dict[str, str] = {
+    'python': 'tree-sitter-python',
+    'typescript': 'tree-sitter-typescript',
+    'javascript': 'tree-sitter-javascript',
+    'java': 'tree-sitter-java',
+    'rust': 'tree-sitter-rust',
+    'go': 'tree-sitter-go',
+    'c': 'tree-sitter-c',
+    'cpp': 'tree-sitter-cpp',
+}
 
 
-def _load_grammar(language: str) -> Optional[tree_sitter.Language]:
-    """Load tree-sitter grammar for a language. Returns None if unavailable."""
+def _auto_install_grammar(language: str) -> bool:
+    """Auto-install tree-sitter core and grammar package via pip. Returns True on success.
+
+    Disabled when HAN_NO_INSTALL=1 environment variable is set.
+    """
+    if not _AUTO_INSTALL_ENABLED:
+        return False
+
+    grammar_pkg = _PIP_GRAMMAR_PACKAGES.get(language)
+    if not grammar_pkg:
+        return False
+
+    packages = ['tree-sitter', grammar_pkg]
+    print(f"[HAN] Installing tree-sitter grammar for {language}...")
+    try:
+        result = subprocess.run(
+            [sys.executable, '-m', 'pip', 'install', '--quiet'] + packages,
+            capture_output=True,
+            timeout=120,
+        )
+        if result.returncode == 0:
+            return True
+        warnings.warn(
+            f"Failed to auto-install tree-sitter for {language}. "
+            f"Run manually: pip install -r requirements-ast.txt"
+        )
+        return False
+    except Exception as exc:
+        warnings.warn(
+            f"Failed to auto-install tree-sitter for {language}: {type(exc).__name__}. "
+            f"Run manually: pip install -r requirements-ast.txt"
+        )
+        return False
+
+
+_LOADER_MAP = {
+    'python': ('tree_sitter_python', 'language'),
+    'typescript': ('tree_sitter_typescript', 'language_typescript'),
+    'javascript': ('tree_sitter_javascript', 'language'),
+    'java': ('tree_sitter_java', 'language'),
+    'rust': ('tree_sitter_rust', 'language'),
+    'go': ('tree_sitter_go', 'language'),
+    'c': ('tree_sitter_c', 'language'),
+    'cpp': ('tree_sitter_cpp', 'language'),
+}
+
+
+def _load_grammar(language: str, auto_install: bool = True) -> Optional[Any]:
+    """Load tree-sitter grammar for a language. Returns None if unavailable.
+
+    Args:
+        language: Language name (e.g. 'python', 'typescript')
+        auto_install: If True, attempt pip install on missing grammars.
+                      Set False for capability probes (can_handle) to avoid side effects.
+    """
+    global _HAS_TREE_SITTER, tree_sitter
+
+    # Fast path: already cached (None = permanent failure, grammar = success)
     if language in _GRAMMAR_CACHE:
         return _GRAMMAR_CACHE[language]
 
-    loader_map = {
-        'python': ('tree_sitter_python', 'language'),
-        'typescript': ('tree_sitter_typescript', 'language_typescript'),
-        'javascript': ('tree_sitter_javascript', 'language'),
-        'java': ('tree_sitter_java', 'language'),
-        'rust': ('tree_sitter_rust', 'language'),
-        'go': ('tree_sitter_go', 'language'),
-        'c': ('tree_sitter_c', 'language'),
-        'cpp': ('tree_sitter_cpp', 'language'),
-    }
-
-    spec = loader_map.get(language)
-    if not spec:
+    # Unsupported language — no loader spec exists
+    if language not in _LOADER_MAP:
         return None
 
-    module_name, func_name = spec
-    try:
-        import importlib
-        mod = importlib.import_module(module_name)
-        lang_func = getattr(mod, func_name)
-        grammar = tree_sitter.Language(lang_func())
-        _GRAMMAR_CACHE[language] = grammar
+    with _GRAMMAR_LOCK:
+        # Double-check after acquiring lock
+        if language in _GRAMMAR_CACHE:
+            return _GRAMMAR_CACHE[language]
+
+        # Ensure tree-sitter core is available
+        if not _HAS_TREE_SITTER:
+            if auto_install and _auto_install_grammar(language):
+                try:
+                    import importlib
+                    tree_sitter = importlib.import_module('tree_sitter')
+                    _HAS_TREE_SITTER = True
+                except ImportError:
+                    pass
+            if not _HAS_TREE_SITTER:
+                # Don't cache — tree-sitter might be installed later
+                return None
+
+        module_name, func_name = _LOADER_MAP[language]
+
+        def _try_import() -> Optional[Any]:
+            try:
+                import importlib
+                mod = importlib.import_module(module_name)
+                lang_func = getattr(mod, func_name)
+                return tree_sitter.Language(lang_func())
+            except (ImportError, AttributeError, OSError, TypeError, ValueError):
+                return None
+
+        install_succeeded = False
+        grammar = _try_import()
+        if grammar is None and auto_install:
+            # Try auto-install once, then retry
+            install_succeeded = _auto_install_grammar(language)
+            if install_succeeded:
+                grammar = _try_import()
+
+        if grammar is not None:
+            # Cache successful load
+            _GRAMMAR_CACHE[language] = grammar
+        elif install_succeeded:
+            # Install succeeded but import still failed — permanent failure (incompatible version etc.)
+            _GRAMMAR_CACHE[language] = None
+        # else: install failed (transient) or probe-only — don't cache, allow retry later
+
         return grammar
-    except (ImportError, AttributeError, OSError):
-        return None
 
 
 # =============================================================================
@@ -1552,7 +1659,11 @@ class TreeSitterBackend:
         return {'functions', 'classes', 'imports', 'methods', 'calls'}
 
     def can_handle(self, language: str) -> bool:
-        return language in QUERY_PACKS and _load_grammar(language) is not None
+        # Check if we *support* this language (have a query pack + loader spec).
+        # Don't require grammar to be loaded — it will be auto-installed on extract().
+        # This ensures the registry selects TreeSitterBackend even when grammars
+        # aren't yet installed, allowing extract_language() to trigger auto-install.
+        return language in QUERY_PACKS and language in _LOADER_MAP
 
     def extract(self, content: str, file_path: str, abs_file_path: str = None) -> ExtractionResult:
         """Extract using auto-detected language from file extension."""
