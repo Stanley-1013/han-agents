@@ -1,28 +1,80 @@
+**English** | [繁體中文](README.zh-TW.md)
+
 # HAN-Agents
 
-**HAN** = **H**ierarchical **A**pproached **N**euromorphic Agents
+**H**ierarchical **A**pproached **N**euromorphic Agents — a brain-inspired multi-agent task system for AI coding assistants.
 
-A multi-agent task system with three-layer architecture: **Skill** (intent) + **Code Graph** (reality) + **Memory** (experience). Brain-inspired design where PFC coordinates specialized agents through automated dispatch loops.
+![Python 3.8+](https://img.shields.io/badge/Python-3.8%2B-blue?logo=python&logoColor=white)
+![SQLite FTS5](https://img.shields.io/badge/SQLite-FTS5-lightgrey?logo=sqlite)
+![License: MIT](https://img.shields.io/badge/License-MIT-green)
+![Platforms](https://img.shields.io/badge/Platforms-Claude%20%7C%20Cursor%20%7C%20Windsurf%20%7C%206%20more-purple)
 
-Works with any AI coding agent that supports the [Agent Skills](https://agentskills.io) standard, including Claude Code, Cursor, Windsurf, Cline, Codex CLI, Gemini CLI, Antigravity, and Kiro.
+---
+
+> **Clone once. Start immediately. No configuration required.**
+>
+> HAN auto-creates its database, registers hooks, and installs grammars the first time you use it.
+
+---
+
+## What Is HAN?
+
+HAN is a task orchestration layer that sits inside your AI coding agent. It gives your agent persistent memory, a live code map, and a structured workflow — so complex, multi-step projects don't fall apart between conversations.
+
+Three layers work together:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                          HAN System                              │
+├─────────────────┬─────────────────┬─────────────────┬───────────┤
+│   Skill Layer   │   Code Graph    │     Memory      │   Tasks   │
+│    (Intent)     │   (Reality)     │  (Experience)   │(Execution)│
+├─────────────────┼─────────────────┼─────────────────┼───────────┤
+│  SKILL.md       │  code_nodes     │ long_term_      │  tasks    │
+│  flows/*.md     │  code_edges     │   memory        │ checkpts  │
+│  domains/*      │  file_hashes    │ working_        │ agent_    │
+│                 │                 │   memory        │   logs    │
+└─────────────────┴─────────────────┴─────────────────┴───────────┘
+```
+
+- **Skill Layer** — intent definitions that guide agent behavior
+- **Code Graph** — live AST snapshot of your codebase (8 languages)
+- **Memory** — semantic search over past lessons; resumable checkpoints
+- **Tasks** — Jira-like hierarchy (Epic → Story → Task → Bug) with automated dispatch
+
+---
+
+## Why HAN?
+
+| Challenge | What HAN does |
+|-----------|---------------|
+| Long tasks lose context between conversations | Micro-Nap checkpoints save and restore mid-task state |
+| Agents repeat the same mistakes | Semantic memory surfaces relevant lessons before each run |
+| Hard to know if code matches the design | Drift detection compares Skill definitions against actual code |
+| Complex workflows require manual hand-holding | Automated dispatch loop runs Executor → Critic → Memory without intervention |
+| Setting up a new project takes too much boilerplate | `ensure_project()` auto-detects languages, frameworks, and test tools |
+
+---
 
 ## Features
 
-- **Automated Dispatch Loop** — `get_next_dispatch()` auto-orchestrates Executor → Critic → Memory pipeline
-- **Recipe System** — Pre-built workflows (e.g. `recipe_unit_tests()`) that auto-generate task trees
-- **Task Lifecycle** — Jira-like hierarchy (Epic → Story → Task → Bug) with create, execute, validate, and document
-- **Code Graph** — Tree-sitter AST + regex fallback, with call graph and method extraction (8 languages)
-- **Drift Detection** — Compare Skill definitions against actual code implementation
-- **Semantic Memory** — FTS5 + embedding-based search with LLM reranking
-- **Auto Tech Stack Detection** — `ensure_project()` auto-detects languages, frameworks, and test tools
-- **Micro-Nap Checkpoints** — Save/resume long-running tasks across conversations
-- **Zero-Config** — Clone to skills directory, database auto-creates on first use
+- **Zero-Config Start** — database and hooks auto-initialize on first use
+- **Automated Dispatch Loop** — `get_next_dispatch()` orchestrates Executor → Critic → Memory pipeline end-to-end
+- **Recipe System** — pre-built workflows (e.g. `recipe_unit_tests()`) that generate full task trees from a single call
+- **Code Graph** — Tree-sitter AST with regex fallback; call graph and method extraction across 8 languages
+- **Drift Detection** — compare Skill definitions against actual code implementation
+- **Semantic Memory** — FTS5 + embedding search with LLM reranking
+- **Task Lifecycle** — full hierarchy with create, execute, validate, and document phases
+- **Auto Tech Stack Detection** — `ensure_project()` detects languages, frameworks, and test tools
+- **Micro-Nap Checkpoints** — save and resume long-running tasks across conversations
+
+---
 
 ## Installation
 
 ### Step 1: Clone
 
-Clone to your AI coding agent's skills directory:
+Choose your platform and clone to its skills directory:
 
 <details>
 <summary><b>Claude Code</b></summary>
@@ -57,7 +109,7 @@ git clone https://github.com/Stanley-1013/han-agents.git .cursor/skills/han-agen
 <details>
 <summary><b>Windsurf / Cline / Codex CLI / Gemini CLI / Antigravity</b></summary>
 
-Replace the skills directory with your platform's equivalent:
+Replace the target path with your platform's skills directory:
 
 | Platform | Directory |
 |----------|-----------|
@@ -72,19 +124,20 @@ Replace the skills directory with your platform's equivalent:
 <details>
 <summary><b>Kiro (AWS)</b></summary>
 
-Uses the **Powers** system — search for "han-agents" in Kiro's Powers panel or install from GitHub URL.
+Uses the **Powers** system — search for "han-agents" in Kiro's Powers panel or install from the GitHub URL.
 
 </details>
 
 ### Step 2: Just Start
 
-That's it. No install script needed. On first use, han-agents automatically:
+That's it. No install script, no config file. On first use, HAN automatically:
+
 - Creates the database (`brain/brain.db`)
 - Copies agent definitions to your platform's agents directory
 - Registers hooks (Claude Code only)
-- Installs tree-sitter grammars on demand (for enhanced code extraction)
+- Installs Tree-sitter grammars on demand
 
-Set `HAN_NO_INSTALL=1` to disable auto-installation (CI/air-gapped environments).
+> Set `HAN_NO_INSTALL=1` to disable auto-initialization (useful in CI or air-gapped environments).
 
 <details>
 <summary><b>Optional: manual install / advanced setup</b></summary>
@@ -103,20 +156,25 @@ python scripts/install.py --skip-prompts
 | `--sync-graph` | Sync Code Graph |
 | `--reset` | Reset database |
 
-Pre-install tree-sitter grammars (optional, auto-installed on first use):
+Pre-install Tree-sitter grammars (optional — auto-installed on first use):
+
 ```bash
 pip install -r requirements-ast.txt
 ```
 
 </details>
 
-### Verify (optional)
+### Verify Installation
 
 ```bash
 python scripts/doctor.py
 ```
 
+---
+
 ## Quick Start
+
+### Import
 
 ```python
 import sys, os
@@ -145,13 +203,13 @@ python cli/main.py init my-project /path/to/project
 
 ### Recipe + Dispatch Loop
 
-One command to generate tasks, auto-dispatch agents:
+One call to generate a full task tree, then a loop to run it:
 
 ```python
-# 1. Recipe auto-analyzes project, builds task tree
+# 1. Recipe auto-analyzes the project and builds the task tree
 result = recipe_unit_tests('my-project', '/path/to/project')
 
-# 2. Dispatch loop — repeat until done
+# 2. Dispatch loop — repeat until all tasks are done
 while True:
     inst = get_next_dispatch(result['epic_id'], 'my-project', '/path/to/project')
     if inst['action'] != 'dispatch':
@@ -160,32 +218,19 @@ while True:
     Task(subagent_type=inst['subagent_type'], prompt=inst['prompt'])
 ```
 
-`get_next_dispatch()` handles automatically:
-- Executor → Critic validation loop (idempotent, no duplicate critics)
+`get_next_dispatch()` handles the full lifecycle automatically:
+
+- Executor → Critic validation (idempotent, no duplicate critics)
 - Rejected tasks → retry with feedback context
 - All done → Memory agent stores lessons learned
 - Returns `model_tier` for platform-specific model selection
 
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                        HAN System                            │
-├───────────────┬───────────────┬───────────────┬──────────────┤
-│  Skill Layer  │  Code Graph   │    Memory     │    Tasks     │
-│   (Intent)    │  (Reality)    │ (Experience)  │ (Execution)  │
-├───────────────┼───────────────┼───────────────┼──────────────┤
-│  SKILL.md     │  code_nodes   │ long_term_    │   tasks      │
-│  flows/*.md   │  code_edges   │   memory      │ checkpoints  │
-│  domains/*    │  file_hashes  │ working_      │ agent_logs   │
-│               │               │   memory      │              │
-└───────────────┴───────────────┴───────────────┴──────────────┘
-```
+---
 
 ## Agents
 
-| Agent | Type | Model Tier | Purpose |
-|-------|------|------------|---------|
+| Agent | Type | Model Tier | Role |
+|-------|------|------------|------|
 | PFC | `pfc` | `planner` | Planning and task decomposition |
 | Executor | `executor` | `worker` | Task execution |
 | Critic | `critic` | `worker` | Validation and quality checks |
@@ -193,24 +238,30 @@ while True:
 | Researcher | `researcher` | `worker` | Information gathering |
 | Drift Detector | `drift-detector` | `fast` | Skill-Code drift detection |
 
-> **Model Tier**: Semantic capability levels — `planner` (strongest reasoning), `worker` (balanced), `fast` (low-cost). Each platform maps tiers to its own models.
+> **Model Tier** maps to semantic capability levels: `planner` (strongest reasoning), `worker` (balanced), `fast` (low-cost). Each platform maps these tiers to its own models.
+
+---
 
 ## API Reference
 
-### Facade (Unified Entry Point)
+### Facade — Unified Entry Point
+
+The main interface for most workflows:
 
 ```python
 from servers.facade import (
-    sync,              # Sync Code Graph
-    status,            # Project status
-    check_drift,       # Skill vs Code drift
-    get_full_context,  # Three-layer context
+    sync,              # Sync Code Graph from source files
+    status,            # Project status overview
+    check_drift,       # Detect Skill vs Code divergence
+    get_full_context,  # Retrieve all three-layer context
     finish_task,       # Complete task lifecycle
-    get_next_dispatch, # Auto-dispatch next agent
+    get_next_dispatch, # Auto-dispatch next agent in pipeline
 )
 ```
 
 ### Recipes
+
+Pre-built workflows that generate full task trees:
 
 ```python
 from servers.recipes import (
@@ -221,15 +272,17 @@ from servers.recipes import (
 
 ### Tasks
 
+Full Jira-like task hierarchy management:
+
 ```python
 from servers.tasks import (
-    create_task,           # Create task (epic/story/task/bug)
+    create_task,           # Create task (epic / story / task / bug)
     create_subtask,        # Create child task (auto-inherits hierarchy)
     reserve_critic_task,   # Atomic critic reservation (idempotent)
-    get_task_progress,     # Completion stats
+    get_task_progress,     # Completion statistics
     get_epic_tasks,        # Epics with nested stories
     get_story_tasks,       # Tasks under a story
-    get_hierarchy_summary, # Count by level {epics, stories, tasks, bugs}
+    get_hierarchy_summary, # Count by level: {epics, stories, tasks, bugs}
 )
 ```
 
@@ -237,24 +290,43 @@ from servers.tasks import (
 
 ```python
 from servers.project import (
-    ensure_project,    # Auto-init: sync Code Graph + detect tech stack + store DB
+    ensure_project,    # Auto-init: sync Code Graph + detect tech stack + store to DB
 )
 ```
 
 ### Code Graph
 
+Live AST snapshot and traversal:
+
 ```python
 from servers.code_graph import (
-    sync_from_directory,        # Sync folder to Code Graph
+    sync_from_directory,        # Sync a folder into the Code Graph
     get_class_dependencies_bfs, # BFS dependency traversal
-    get_file_structure,         # File's code structure
+    get_file_structure,         # Code structure of a single file
 )
 ```
 
-Supported languages:
+### Memory
+
+Persistent knowledge across conversations:
+
+```python
+from servers.memory import (
+    search_memory_semantic,  # Semantic search with LLM reranking
+    store_memory,            # Store to long-term memory
+    save_checkpoint,         # Create a Micro-Nap checkpoint
+    load_checkpoint,         # Resume from checkpoint
+)
+```
+
+---
+
+## Code Graph: Supported Languages
+
+Tree-sitter provides full AST accuracy. A regex fallback is available for the languages marked below — HAN installs grammars automatically on first use.
 
 | Language | Extensions | Backend | Call Graph | Methods |
-|----------|------------|---------|------------|---------|
+|----------|------------|---------|:----------:|:-------:|
 | TypeScript | `.ts`, `.tsx` | Tree-sitter (regex fallback) | Yes | Yes |
 | JavaScript | `.js`, `.jsx` | Tree-sitter (regex fallback) | Yes | Yes |
 | Python | `.py` | Tree-sitter (regex fallback) | Yes | Yes |
@@ -264,23 +336,15 @@ Supported languages:
 | C | `.c`, `.h` | Tree-sitter only | Yes | — |
 | C++ | `.cpp`, `.cc`, `.cxx`, `.hpp`, `.hh`, `.hxx` | Tree-sitter only | Yes | Yes |
 
-Install Tree-sitter for enhanced extraction (optional, regex fallback available for TS/JS/Python/Java/Rust):
+To pre-install all grammars at once:
+
 ```bash
 pip install tree-sitter tree-sitter-python tree-sitter-javascript tree-sitter-typescript tree-sitter-java tree-sitter-rust tree-sitter-go tree-sitter-c tree-sitter-cpp
 ```
 
-### Memory
+---
 
-```python
-from servers.memory import (
-    search_memory_semantic,  # Semantic search with reranking
-    store_memory,            # Store to long-term memory
-    save_checkpoint,         # Micro-Nap checkpoint
-    load_checkpoint,         # Resume from checkpoint
-)
-```
-
-## CLI
+## CLI Reference
 
 ```bash
 python cli/main.py <command>
@@ -289,27 +353,31 @@ python cli/main.py <command>
 | Command | Description |
 |---------|-------------|
 | `doctor` | Diagnose system status |
+| `init` | Initialize a project for HAN |
 | `sync` | Sync Code Graph from source files |
 | `status` | Show project status overview |
-| `init` | Initialize project for HAN |
 | `drift` | Check SSOT vs Code drift |
-| `install-hooks` | Install Git hooks for auto-sync |
-| `ssot-sync` | Sync SSOT Index to Graph |
 | `graph` | Query and explore the SSOT Graph |
 | `dashboard` | Show full system dashboard |
+| `ssot-sync` | Sync SSOT Index to Graph |
+| `install-hooks` | Install Git hooks for auto-sync |
 
-## Scripts
+### Utility Scripts
 
 ```bash
 cd <path-to-han-agents>
 
-python scripts/install.py --skip-prompts  # Install/update
-python scripts/doctor.py                  # Verify installation
-python scripts/sync.py /path/to/project   # Sync Code Graph
-python scripts/init_project.py my-project /path/to/project  # Init project
+python scripts/install.py --skip-prompts           # Install / update
+python scripts/doctor.py                           # Verify installation
+python scripts/sync.py /path/to/project            # Sync Code Graph
+python scripts/init_project.py my-project /path/  # Init a project
 ```
 
-## Compatibility
+---
+
+## Platform Compatibility
+
+### Supported Platforms
 
 | Platform | Skills Directory | Scope |
 |----------|-----------------|-------|
@@ -322,36 +390,43 @@ python scripts/init_project.py my-project /path/to/project  # Init project
 | [Antigravity](https://antigravity.google) | `~/.antigravity/skills/` or `.antigravity/skills/` | Global / Project |
 | [Kiro](https://kiro.dev) | Powers system (one-click install) | — |
 
+### Feature Support
+
 | Feature | Claude Code | Other Platforms |
-|---------|-------------|-----------------|
-| Memory & Semantic Search | ✅ Full | ✅ Full |
-| Code Graph & Drift Detection | ✅ Full | ✅ Full |
-| Task Lifecycle Management | ✅ Full | ✅ Full |
-| Multi-Agent Coordination | ✅ Native (Task tool) | ⚠️ Sequential |
+|---------|:-----------:|:---------------:|
+| Memory & Semantic Search | Full | Full |
+| Code Graph & Drift Detection | Full | Full |
+| Task Lifecycle Management | Full | Full |
+| Multi-Agent Coordination | Native (parallel) | Sequential |
 
-> Claude Code's Task tool enables parallel agent execution with isolated contexts. Other platforms run agents sequentially in shared context.
+> Claude Code's Task tool enables parallel agent execution with isolated contexts. Other platforms run agents sequentially in a shared context.
 
-## Documentation
-
-- [SKILL.md](SKILL.md) — Main skill definition
-- [reference/API_REFERENCE.md](reference/API_REFERENCE.md) — Complete API documentation
-- [reference/WORKFLOW_GUIDE.md](reference/WORKFLOW_GUIDE.md) — Workflow patterns
-- [reference/GRAPH_GUIDE.md](reference/GRAPH_GUIDE.md) — Graph operations
-- [reference/TROUBLESHOOTING.md](reference/TROUBLESHOOTING.md) — Common issues
-- [docs/QUICKSTART_HANDOVER.md](docs/QUICKSTART_HANDOVER.md) — Quick start handover guide
-- [docs/WHITEPAPER.md](docs/WHITEPAPER.md) — Architecture whitepaper
+---
 
 ## Database
 
-SQLite at `<han-agents>/brain/brain.db` (auto-created on first use).
+HAN uses SQLite at `<han-agents>/brain/brain.db`, auto-created on first use.
 
 - Schema: [brain/schema.sql](brain/schema.sql)
-- Example: `brain/brain.example.db` — reference database for testing
+- Reference DB for testing: `brain/brain.example.db`
 
-## Requirements
+**Requirements:** Python 3.8+, SQLite 3.9+ (FTS5 required)
 
-- Python 3.8+
-- SQLite 3.9+ (FTS5 support required)
+---
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [SKILL.md](SKILL.md) | Main skill definition |
+| [reference/API_REFERENCE.md](reference/API_REFERENCE.md) | Complete API documentation |
+| [reference/WORKFLOW_GUIDE.md](reference/WORKFLOW_GUIDE.md) | Workflow patterns |
+| [reference/GRAPH_GUIDE.md](reference/GRAPH_GUIDE.md) | Graph operations |
+| [reference/TROUBLESHOOTING.md](reference/TROUBLESHOOTING.md) | Common issues and fixes |
+| [docs/QUICKSTART_HANDOVER.md](docs/QUICKSTART_HANDOVER.md) | Quick start handover guide |
+| [docs/WHITEPAPER.md](docs/WHITEPAPER.md) | Architecture whitepaper |
+
+---
 
 ## License
 
