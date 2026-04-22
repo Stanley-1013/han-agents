@@ -2,14 +2,10 @@
 Extractor Backend Registry
 
 提供 parser backend 抽象層，支援多種解析策略：
-- RegexBackend: 基於正則表達式（預設 fallback）
-- TreeSitterBackend: 基於 Tree-sitter AST（Phase 2 實現）
+- TreeSitterBackend (priority=10): AST 解析，支援 8 語言
+- RegexBackend (priority=0): 正則表達式 fallback，Tier-1 語言已棄用
 
-使用方式：
-    from tools.code_graph_extractor.backends import get_backend
-
-    backend = get_backend('typescript')
-    result = backend.extract(content, file_path)
+Tier-1 語言 (TS, JS, Python, Java, Rust) 建議使用 Tree-sitter。
 """
 
 from typing import Protocol, Set, Optional, List, Tuple, runtime_checkable
@@ -115,26 +111,31 @@ LANGUAGE_CONFIGS = {
         'extensions': ['.ts', '.tsx'],
         'preferred_backend': 'tree_sitter',
         'fallback_backend': 'regex',
+        'regex_deprecated': True,
     },
     'javascript': {
         'extensions': ['.js', '.jsx'],
         'preferred_backend': 'tree_sitter',
         'fallback_backend': 'regex',
+        'regex_deprecated': True,
     },
     'python': {
         'extensions': ['.py'],
         'preferred_backend': 'tree_sitter',
         'fallback_backend': 'regex',
+        'regex_deprecated': True,
     },
     'java': {
         'extensions': ['.java'],
         'preferred_backend': 'tree_sitter',
         'fallback_backend': 'regex',
+        'regex_deprecated': True,
     },
     'rust': {
         'extensions': ['.rs'],
         'preferred_backend': 'tree_sitter',
         'fallback_backend': 'regex',
+        'regex_deprecated': True,
     },
     'go': {
         'extensions': ['.go'],
@@ -152,6 +153,12 @@ LANGUAGE_CONFIGS = {
         'fallback_backend': None,  # tree-sitter only
     },
 }
+
+
+def is_regex_deprecated(language: str) -> bool:
+    """Check if regex backend is deprecated for this language."""
+    config = LANGUAGE_CONFIGS.get(language, {})
+    return config.get('regex_deprecated', False)
 
 
 # =============================================================================
