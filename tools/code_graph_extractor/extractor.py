@@ -94,6 +94,14 @@ SUPPORTED_EXTENSIONS = {
     '.go': 'go',
     '.java': 'java',
     '.rs': 'rust',
+    '.c': 'c',
+    '.h': 'c',
+    '.cpp': 'cpp',
+    '.cc': 'cpp',
+    '.cxx': 'cpp',
+    '.hpp': 'cpp',
+    '.hh': 'cpp',
+    '.hxx': 'cpp',
 }
 
 # 忽略的目錄
@@ -116,6 +124,12 @@ IGNORED_DIRS = {
 def get_supported_languages() -> List[str]:
     """取得支援的語言列表"""
     return list(set(SUPPORTED_EXTENSIONS.values()))
+
+def normalize_file_path(file_path: str, project_root: Optional[str] = None) -> str:
+    """Normalize to project-relative POSIX-style path for stable IDs and DB keys."""
+    if project_root:
+        file_path = os.path.relpath(file_path, project_root)
+    return Path(file_path).as_posix()
 
 def compute_file_hash(file_path: str) -> str:
     """計算檔案內容 hash"""
@@ -1631,12 +1645,13 @@ class RegexExtractor:
 # Main API
 # =============================================================================
 
-def extract_from_file(file_path: str) -> ExtractionResult:
+def extract_from_file(file_path: str, project_root: Optional[str] = None) -> ExtractionResult:
     """
     從單一檔案提取程式碼結構
 
     Args:
-        file_path: 檔案路徑
+        file_path: 檔案路徑（absolute）
+        project_root: 專案根目錄（用於正規化為 relative path）
 
     Returns:
         ExtractionResult 包含 nodes 和 edges
@@ -1663,16 +1678,50 @@ def extract_from_file(file_path: str) -> ExtractionResult:
             errors=[f"Failed to read file: {str(e)}"]
         )
 
-    # 使用 Regex extractor（fallback）
-    # TODO: 當 Tree-sitter 可用時，優先使用
+    # Heuristic: .h may be C or C++ — peek content for C++ markers.
+    # Strip comments/strings first to avoid false positives from macros/docs.
+    if language == 'c' and file_path.endswith('.h'):
+        head = content[:8192]
+        stripped = re.sub(r'/\*.*?\*/', ' ', head, flags=re.DOTALL)
+        stripped = re.sub(r'//[^\n]*', ' ', stripped)
+        stripped = re.sub(r'"(?:\\.|[^"\\])*"', ' ', stripped)
+        stripped = re.sub(r"'(?:\\.|[^'\\])*'", ' ', stripped)
+        # Drop preprocessor #define bodies (single-line only — keep it simple)
+        stripped = re.sub(r'^\s*#\s*define\s+\w+.*$', ' ', stripped, flags=re.MULTILINE)
+        cpp_patterns = (
+            r'\bclass\s+\w',
+            r'\bnamespace\s+\w',
+            r'\btemplate\s*<',
+            r'\b(?:public|private|protected)\s*:',
+            r'\busing\s+namespace\b',
+            r'\busing\s+\w+\s*=',
+        )
+        if any(re.search(p, stripped) for p in cpp_patterns):
+            language = 'cpp'
+
+    logical_path = normalize_file_path(file_path, project_root)
+
+    # Try backend registry first (supports Tree-sitter + future backends)
+    from tools.code_graph_extractor.backends import get_backend, get_fallback_backend
+    backend = get_backend(language)
+    if backend is not None:
+        result = backend.extract_language(content, logical_path, language, abs_file_path=file_path)
+        # If primary backend failed (e.g. grammar not installed), try fallback
+        if result.errors and not result.nodes:
+            fallback = get_fallback_backend(language, exclude=backend)
+            if fallback is not None:
+                return fallback.extract_language(content, logical_path, language, abs_file_path=file_path)
+        return result
+
+    # Direct fallback for unregistered languages (legacy path)
     if language in ('typescript', 'javascript'):
-        return RegexExtractor.extract_typescript(content, file_path)
+        return RegexExtractor.extract_typescript(content, logical_path)
     elif language == 'python':
-        return RegexExtractor.extract_python(content, file_path)
+        return RegexExtractor.extract_python(content, logical_path)
     elif language == 'java':
-        return RegexExtractor.extract_java(content, file_path)
+        return RegexExtractor.extract_java(content, logical_path)
     elif language == 'rust':
-        return RegexExtractor.extract_rust(content, file_path)
+        return RegexExtractor.extract_rust(content, logical_path)
     else:
         return ExtractionResult(
             file_path=file_path,
@@ -1726,27 +1775,28 @@ def extract_from_directory(
 
     # 遍歷目錄
     for root, dirs, files in os.walk(directory):
+        dirs.sort()
+        files.sort()
         # 跳過忽略的目錄
         dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
 
         for filename in files:
-            ext = os.path.splitext(filename)[1].lower()
-            if ext not in SUPPORTED_EXTENSIONS:
+            abs_path = os.path.join(root, filename)
+            if detect_language(abs_path) is None:
                 continue
 
-            file_path = os.path.join(root, filename)
-            rel_path = os.path.relpath(file_path, directory)
+            rel_path = normalize_file_path(abs_path, directory)
 
             # 增量檢查
             if incremental:
-                current_hash = compute_file_hash(file_path)
+                current_hash = compute_file_hash(abs_path)
                 if rel_path in file_hashes and file_hashes[rel_path] == current_hash:
                     files_skipped += 1
                     new_hashes[rel_path] = current_hash
                     continue
 
-            # 提取
-            result = extract_from_file(file_path)
+            # 提取（傳入 project_root 確保 node ID 使用 relative path）
+            result = extract_from_file(abs_path, project_root=directory)
 
             if result.errors:
                 errors.extend(result.errors)
@@ -1755,6 +1805,18 @@ def extract_from_directory(
                 all_edges.extend([e.to_dict() for e in result.edges])
                 new_hashes[rel_path] = result.file_hash
                 files_processed += 1
+
+    # Phase 3: Cross-file resolution — resolve symbolic to_ids before returning
+    if all_nodes and all_edges:
+        try:
+            from tools.code_graph_extractor.resolver import resolve_edges
+            # Convert back to dataclass objects for resolver
+            node_objs = [CodeNode(**n) for n in all_nodes]
+            edge_objs = [CodeEdge(**e) for e in all_edges]
+            resolved, stats = resolve_edges(node_objs, edge_objs)
+            all_edges = [e.to_dict() for e in resolved]
+        except ImportError:
+            pass  # resolver not available — skip resolution
 
     return {
         'nodes': all_nodes,

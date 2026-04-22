@@ -260,6 +260,72 @@ Find similar existing memories.
 
 ---
 
+## Code Graph Backends
+
+### ExtractorBackend Protocol
+
+All backends implement the `ExtractorBackend` protocol from `tools.code_graph_extractor.backends`.
+
+```python
+from tools.code_graph_extractor.backends import (
+    ExtractorBackend,   # Protocol
+    get_backend,        # Get best backend for a language
+    list_backends,      # List registered backends
+    register_backend,   # Register a custom backend
+    LANGUAGE_CONFIGS,   # Extension → backend config mapping
+)
+```
+
+### get_backend(language) -> Optional[ExtractorBackend]
+Returns the highest-priority registered backend that supports `language`, or `None`.
+
+### list_backends() -> List[dict]
+Returns all registered backends sorted by priority (descending).
+```python
+print(list_backends())
+# [
+#   {'name': 'tree_sitter', 'priority': 10, 'capabilities': ['functions', 'classes', 'imports', 'methods', 'calls']},
+#   {'name': 'regex',       'priority': 0,  'capabilities': ['functions', 'classes', 'imports']}
+# ]
+```
+
+### register_backend(backend, priority=0) -> None
+Register a custom backend. Tree-sitter registers at priority=10; regex at priority=0.
+
+### LANGUAGE_CONFIGS
+Dict mapping language names to `{extensions, preferred_backend, fallback_backend}`.
+Supported languages: `typescript`, `javascript`, `python`, `java`, `rust`, `go`, `c`, `cpp`.
+
+---
+
+## Cross-File Resolver
+
+```python
+from tools.code_graph_extractor.resolver import resolve_edges, SymbolTable, ResolveStats
+```
+
+### resolve_edges(nodes, edges) -> Tuple[List[CodeEdge], ResolveStats]
+Resolve symbolic `to_id` references in edges using a project-wide node list.
+Does not mutate the original edge list — returns a new list.
+
+```python
+resolved_edges, stats = resolve_edges(nodes, edges)
+# stats.total_edges, stats.resolved, stats.unresolved, stats.ambiguous
+```
+
+### SymbolTable(nodes)
+In-memory index for O(1) symbol lookup.
+
+#### lookup(kind, name) -> List[CodeNode]
+Return all nodes matching `(kind, name)`. Multiple results indicate ambiguity.
+
+#### lookup_module(module_name) -> Optional[CodeNode]
+Resolve a module/import path to a file node. Returns `None` for external packages.
+
+---
+
+---
+
 ## Error Classes
 
 ```python

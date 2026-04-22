@@ -1,0 +1,9 @@
+tree-sitter>=0.23.0
+tree-sitter-python
+tree-sitter-javascript
+tree-sitter-typescript
+tree-sitter-java
+tree-sitter-rust
+tree-sitter-go
+tree-sitter-c
+tree-sitter-cpp

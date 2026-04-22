@@ -27,13 +27,53 @@ result = sync('/path/to/project', 'my-project', incremental=True)
 ```
 
 ### Node Types
-`file`, `class`, `function`, `interface`, `variable`, `import`
+`file`, `class`, `struct`, `function`, `interface`, `type`, `constant`, `module`
 
 ### Edge Types
-`imports`, `calls`, `extends`, `implements`, `contains`
+`imports`, `calls`, `extends`, `implements`, `contains`, `defines`
 
 ### Supported Languages
-TypeScript/JavaScript, Python, Go
+TypeScript/JavaScript, Python, Java, Rust, Go, C, C++
+
+### Parser Backends
+- **Tree-sitter** (priority=10): Accurate AST parsing with call graph extraction, class method extraction, and class hierarchy. Available for all 8 supported languages; C and C++ use tree-sitter only (no regex fallback).
+- **Regex** (priority=0, fallback): Pattern-based extraction when tree-sitter is unavailable. Supports TypeScript, JavaScript, Python, Java, and Rust.
+
+```python
+from tools.code_graph_extractor.backends import get_backend, list_backends
+
+# List all registered backends and their capabilities
+print(list_backends())
+# Example output:
+# [
+#   {'name': 'tree_sitter', 'priority': 10, 'capabilities': ['functions', 'classes', 'imports', 'methods', 'calls']},
+#   {'name': 'regex',       'priority': 0,  'capabilities': ['functions', 'classes', 'imports']}
+# ]
+
+# Get best backend for a language
+backend = get_backend('typescript')
+result = backend.extract(content, file_path)
+```
+
+## Cross-File Resolution (Phase 3)
+
+After all files in a project are extracted, symbolic references (e.g. `class.Base`, `symbol.hello`)
+are resolved to actual node IDs using a project-wide SymbolTable.
+
+```python
+from tools.code_graph_extractor.resolver import resolve_edges, SymbolTable
+
+# nodes and edges come from the extraction pass
+resolved_edges, stats = resolve_edges(nodes, edges)
+print(stats)
+# ResolveStats(total_edges=120, resolved=98, unresolved=18, ambiguous=4)
+```
+
+Resolution rules:
+- **Already resolved** (contains `/` after kind prefix) — passed through unchanged
+- **`module.name`** — matched against file nodes by path; external packages kept symbolic with `confidence=0.5`
+- **`symbol.name`** — tries `function` then `class` lookup; ambiguous matches get `confidence=0.6`
+- **`kind.Name`** (class, struct, function, …) — direct O(1) lookup via SymbolTable
 
 ## Skill Graph Sync
 
