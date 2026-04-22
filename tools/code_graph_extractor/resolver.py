@@ -7,6 +7,7 @@ qualified node IDs (e.g. 'class.src/base.py:Base').
 from __future__ import annotations
 
 import copy
+import os
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -30,6 +31,8 @@ class SymbolTable:
         self._by_kind_name: Dict[Tuple[str, str], List[CodeNode]] = defaultdict(list)
         # file nodes indexed by path segments for module lookup
         self._file_nodes: List[CodeNode] = []
+        # Pre-build module lookup index: normalized_path -> CodeNode list (Issue 4)
+        self._module_index: Dict[str, List[CodeNode]] = defaultdict(list)
 
         for node in nodes:
             simple_name = node.name.split(".")[-1] if node.name else ""
@@ -40,8 +43,37 @@ class SymbolTable:
             if node.name and "." in node.name:
                 self._by_kind_name[(node.kind, node.name)].append(node)
 
+            # Issue 3: also index by qualified suffix from node.id
+            # e.g. "Class.method" from "function.file:Class.method"
+            if ":" in node.id:
+                id_suffix = node.id.split(":", 1)[1]
+                if id_suffix != node.name and id_suffix != simple_name:
+                    self._by_kind_name[(node.kind, id_suffix)].append(node)
+
             if node.kind == "file":
                 self._file_nodes.append(node)
+                fp = node.file_path or ""
+                # Issue 4 + 6: build module index at construction time
+                for ext in (".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java",
+                            ".c", ".h", ".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx"):
+                    if fp.endswith(ext):
+                        fp_no_ext = fp[:-len(ext)]
+                        self._module_index[fp_no_ext].append(node)
+                        # Also index by basename for short imports
+                        basename = fp_no_ext.rsplit("/", 1)[-1]
+                        if basename != fp_no_ext:
+                            self._module_index[basename].append(node)
+                        # Issue 6: directory module support
+                        # e.g. utils/__init__.py -> index as "utils" and basename "utils"
+                        entry_names = ("__init__", "index", "mod")
+                        if basename in entry_names:
+                            dir_name = fp_no_ext.rsplit("/", 1)[0] if "/" in fp_no_ext else ""
+                            if dir_name:
+                                self._module_index[dir_name].append(node)
+                                dir_basename = dir_name.rsplit("/", 1)[-1]
+                                if dir_basename != dir_name:
+                                    self._module_index[dir_basename].append(node)
+                        break
 
     def lookup(self, kind: str, name: str) -> List[CodeNode]:
         """Return all nodes matching kind + name. May return multiple (ambiguous)."""
@@ -53,35 +85,43 @@ class SymbolTable:
         E.g. 'src/utils' would match 'file.src/utils.py'.
         External packages (no '/' and no matching file) return None.
         """
-        # Normalise: strip leading ./ and trailing extension for comparison
-        normalised = module_name.lstrip("./")
+        # Issue 5: normalize properly — handle ./, ../, and leading /
+        normalised = module_name
+        # Strip one level of leading relative prefix (./foo -> foo, ../foo -> foo)
+        while normalised.startswith("./") or normalised.startswith("../"):
+            if "/" in normalised:
+                normalised = normalised.split("/", 1)[1]
+            else:
+                break
+        normalised = normalised.lstrip("/")
 
-        candidates = []
-        for file_node in self._file_nodes:
-            fp = file_node.file_path or ""
-            # Strip common source extensions for comparison
-            fp_no_ext = fp
-            for ext in (".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java"):
-                if fp_no_ext.endswith(ext):
-                    fp_no_ext = fp_no_ext[: -len(ext)]
-                    break
+        # Issue 4: O(1) direct dict lookup
+        matches = self._module_index.get(normalised, [])
+        if len(matches) == 1:
+            return matches[0]
 
-            if fp_no_ext == normalised or fp_no_ext.endswith("/" + normalised):
-                candidates.append(file_node)
+        # If no direct hit, try suffix matching (handles cases where full path
+        # was indexed with a prefix we didn't strip)
+        if len(matches) == 0:
+            for key, nodes in self._module_index.items():
+                if key.endswith("/" + normalised) and len(nodes) == 1:
+                    return nodes[0]
 
-        if len(candidates) == 1:
-            return candidates[0]
         return None
 
 
 def _is_already_resolved(to_id: str) -> bool:
-    """Return True if to_id already contains a file path (has '/' after kind prefix)."""
-    # Format: kind.path/to/file:Name  — the '/' must appear after the first '.'
+    """Return True if to_id already contains a file path (has '/' or ':' after kind prefix).
+
+    Issue 1: root-level files like 'function.main.py:run' have no '/' but do
+    have ':' after the kind prefix — detect both.
+    """
     dot_idx = to_id.find(".")
     if dot_idx == -1:
         return False
     rest = to_id[dot_idx + 1:]
-    return "/" in rest
+    # Resolved IDs contain a file path, indicated by '/' or ':' (for root files like main.py:run)
+    return "/" in rest or ":" in rest
 
 
 def _parse_symbolic(to_id: str) -> Tuple[Optional[str], Optional[str]]:
@@ -147,12 +187,10 @@ def resolve_edges(
         if kind == "symbol":
             # Check for qualified name pattern like "obj.method"
             if "." in name:
-                # e.g. "obj.method" — try (function, "obj.method") first
+                # Issue 2: try qualified name only — don't fallback to global simple name
+                # as it is too imprecise in large projects
                 matches = table.lookup("function", name)
-                if not matches:
-                    # Try just the method part
-                    method_name = name.split(".")[-1]
-                    matches = table.lookup("function", method_name)
+                # Don't fallback to global simple name — too imprecise
             else:
                 matches = table.lookup("function", name)
                 if not matches:

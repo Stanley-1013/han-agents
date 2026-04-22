@@ -15,14 +15,13 @@ import sys
 
 import pytest
 
+pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # ---------------------------------------------------------------------------
 # Backend availability detection
 # ---------------------------------------------------------------------------
-
-import warnings
-warnings.filterwarnings('ignore', category=DeprecationWarning)
 
 try:
     from tools.code_graph_extractor.backends.regex_backend import RegexBackend
