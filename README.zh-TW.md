@@ -4,9 +4,9 @@
 
 **HAN** = **H**ierarchical **A**pproached **N**euromorphic Agents
 
-一套三層架構的多 Agent 任務系統：**Skill**（意圖）+ **Code Graph**（現實）+ **Memory**（經驗）。設計靈感源自神經科學——PFC 協調多個專屬 Agent，透過自動化派遣迴圈完成任務。
+一套三層架構的多 Agent 任務系統：**Skill**（意圖）+ **Code Graph**（現實）+ **Memory**（經驗）。設計靈感源自神經科學，讓 PFC 協調多個專屬 Agent，透過自動化派遣迴圈完成任務。
 
-支援所有相容 [Agent Skills](https://agentskills.io) 標準的 AI 編程工具，包含 Claude Code、Cursor、Windsurf、Cline、Codex CLI、Gemini CLI、Antigravity 以及 Kiro。
+核心 Python 能力可在多數相容 [Agent Skills](https://agentskills.io) 的 AI 編程工具中使用；Claude Code 目前具備最完整的 Task tool 與 hook 整合。支援平台包含 Claude Code、Cursor、Windsurf、Cline、Codex CLI、Gemini CLI、Antigravity 以及 Kiro。
 
 ## 特色功能
 
@@ -15,7 +15,10 @@
 - **任務生命週期** — 仿 Jira 階層（Epic → Story → Task → Bug），涵蓋建立、執行、驗證與文件化
 - **Code Graph** — Tree-sitter AST 搭配 regex 備援，支援呼叫圖與方法萃取（8 種語言）
 - **Drift Detection** — 比對 Skill 定義與實際程式碼，自動偵測落差
-- **語義記憶** — FTS5 全文檢索 + 向量語義搜尋，支援 LLM 重排
+- **語義記憶** — FTS5 全文檢索，支援 Claude rerank prompt 與 optional 本地 embedding 重排
+- **Harness Tracing & Evals** — 本地 trace/span 儲存、deterministic trajectory evals、JSONL / OTel-style 匯出
+- **Guardrails & Review Queue** — 指令/路徑政策檢查、PreToolUse 阻擋、人工 review queue
+- **Schema Migrations** — 版本化 SQLite migration 與 doctor 檢查
 - **自動技術堆疊偵測** — `ensure_project()` 自動識別語言、框架與測試工具
 - **Micro-Nap 檢查點** — 跨對話儲存與恢復長時間執行的任務
 - **Zero-Config** — Clone 完即可用，資料庫首次使用時自動建立
@@ -116,6 +119,7 @@ pip install -r requirements-ast.txt
 
 ```bash
 python scripts/doctor.py
+python cli/main.py eval
 ```
 
 ## 快速開始
@@ -130,6 +134,8 @@ from servers.tasks import create_task, create_subtask, get_task_progress
 from servers.recipes import recipe_unit_tests, run_recipe
 from servers.memory import search_memory_semantic, store_memory
 from servers.project import ensure_project
+from servers.tracing import start_trace, finish_trace
+from servers.evals import evaluate_trajectory, evaluate_trace, extract_agents_from_trace
 ```
 
 ### 初始化專案
@@ -152,14 +158,17 @@ python cli/main.py init my-project /path/to/project
 ```python
 # 1. Recipe 自動分析專案，建立任務樹
 result = recipe_unit_tests('my-project', '/path/to/project')
+trace_id = start_trace('unit_tests recipe', project='my-project')
 
 # 2. 派遣迴圈 — 持續執行直到完成
 while True:
-    inst = get_next_dispatch(result['epic_id'], 'my-project', '/path/to/project')
+    inst = get_next_dispatch(result['epic_id'], 'my-project', '/path/to/project', trace_id=trace_id)
     if inst['action'] != 'dispatch':
         break
     # Claude Code：透過 Task tool 派遣
     Task(subagent_type=inst['subagent_type'], prompt=inst['prompt'])
+
+trace = finish_trace(trace_id)
 ```
 
 `get_next_dispatch()` 自動處理以下所有事項：
@@ -167,6 +176,7 @@ while True:
 - 被退回的任務 → 附帶回饋 context 重新執行
 - 全部完成 → Memory Agent 儲存經驗教訓
 - 回傳 `model_tier`，供各平台選擇對應模型
+- 傳入 `trace_id` 時，會記錄已遮蔽 prompt 的 dispatch/status spans，供 replay 與 eval 使用
 
 ## 架構
 
@@ -282,6 +292,29 @@ from servers.memory import (
 )
 ```
 
+> `search_memory_semantic(..., rerank_mode='claude')` 會回傳候選記憶與 rerank prompt，由呼叫方交給模型排序；`rerank_mode='embedding'` 需要額外安裝 `sentence-transformers` 與 `numpy`。
+
+### Harness Trace & Eval
+
+```python
+from servers.tracing import (
+    start_trace, start_span, finish_span, finish_trace,
+    get_trace, summarize_trace, export_traces_jsonl, export_traces_otel_jsonl,
+)
+from servers.evals import (
+    evaluate_trajectory, evaluate_trace, evaluate_trace_jsonl,
+    extract_agents_from_trace,
+)
+```
+
+### Guardrails / Reviews / Migrations
+
+```python
+from servers.guardrails import get_agent_policy, check_command, check_path, enforce_result
+from servers.reviews import create_review_item, list_review_items, resolve_review_item
+from servers.migrations import apply_pending_migrations, get_migration_history
+```
+
 ## CLI 指令
 
 ```bash
@@ -296,9 +329,31 @@ python cli/main.py <command>
 | `init` | 初始化專案 |
 | `drift` | 檢查 SSOT 與程式碼的落差 |
 | `install-hooks` | 安裝 Git hooks 以自動同步 |
+| `eval` | 執行 deterministic harness trajectory evals |
+| `traces` | 檢視本地 traces、guardrail events，或匯出 JSONL |
+| `reviews` | 檢視與處理人工 review queue |
+| `migrate` | 套用版本化 schema migrations |
+| `guard` | 檢查 Agent 指令/路徑 guardrail policy |
 | `ssot-sync` | 將 SSOT Index 同步至 Graph |
 | `graph` | 查詢與瀏覽 SSOT Graph |
 | `dashboard` | 顯示系統完整儀表板 |
+
+常用範例：
+
+```bash
+python cli/main.py eval
+python cli/main.py eval --trace trace_abc --expected executor,critic,memory
+python cli/main.py traces
+python cli/main.py traces --guardrails
+python cli/main.py traces --export-jsonl /tmp/han-traces.jsonl
+python cli/main.py traces --export-otel-jsonl /tmp/han-otel.jsonl
+python cli/main.py guard --agent executor --command "rm -rf /tmp/project"
+python cli/main.py guard --agent executor --mode warn --command "rm -rf /tmp/project"
+python cli/main.py reviews
+python cli/main.py reviews --enqueue-trace trace_abc
+python cli/main.py reviews --resolve review_abc --reviewer alice --resolution approved
+python cli/main.py migrate --history
+```
 
 ## 腳本
 
@@ -329,9 +384,12 @@ python scripts/init_project.py my-project /path/to/project  # 初始化專案
 | 記憶與語義搜尋 | ✅ 完整支援 | ✅ 完整支援 |
 | Code Graph 與 Drift Detection | ✅ 完整支援 | ✅ 完整支援 |
 | 任務生命週期管理 | ✅ 完整支援 | ✅ 完整支援 |
-| 多 Agent 協作 | ✅ 原生支援（Task tool） | ⚠️ 循序執行 |
+| Harness traces / evals / reviews | ✅ 完整支援 | ✅ 完整支援 |
+| Guardrail CLI | ✅ 完整支援 | ✅ 完整支援 |
+| PreToolUse / PostToolUse hooks | ✅ 原生支援 | ⚠️ 依平台能力而定 |
+| 多 Agent 協作 | ✅ 原生支援（Task tool） | ⚠️ 通常需循序執行 |
 
-> Claude Code 的 Task tool 支援在獨立 context 中並行執行多個 Agent。其他平台目前為循序執行（共享 context）。
+> Claude Code 的 Task tool 支援在獨立 context 中執行多個 Agent，並可透過 PreToolUse/PostToolUse hooks 做 lifecycle automation 與 guardrail enforcement。其他平台可使用 HAN 的 Python/CLI 核心能力，但 hook 與多 Agent 派發深度依平台而定。
 
 ## 文件
 
@@ -340,6 +398,7 @@ python scripts/init_project.py my-project /path/to/project  # 初始化專案
 - [reference/WORKFLOW_GUIDE.md](reference/WORKFLOW_GUIDE.md) — 工作流程模式指南
 - [reference/GRAPH_GUIDE.md](reference/GRAPH_GUIDE.md) — Graph 操作指南
 - [reference/TROUBLESHOOTING.md](reference/TROUBLESHOOTING.md) — 常見問題排除
+- [docs/HARNESS_ROADMAP.md](docs/HARNESS_ROADMAP.md) — Trace / eval / guardrail 成熟度 roadmap
 - [docs/QUICKSTART_HANDOVER.md](docs/QUICKSTART_HANDOVER.md) — 快速上手移交指南
 - [docs/WHITEPAPER.md](docs/WHITEPAPER.md) — 架構白皮書
 
