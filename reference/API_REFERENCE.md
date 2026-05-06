@@ -35,6 +35,14 @@ from servers.memory import (
     get_working_memory, set_working_memory, save_checkpoint, load_checkpoint,
     get_project_context, add_episode, get_recent_episodes
 )
+
+# Harness tracing and evals
+from servers.tracing import start_trace, start_span, finish_span, finish_trace, get_trace
+from servers.evals import (
+    evaluate_trajectory, evaluate_trace, evaluate_trace_jsonl,
+    extract_agents_from_trace,
+)
+from servers.guardrails import get_agent_policy, check_command, check_path
 ```
 
 ---
@@ -75,9 +83,11 @@ Critic must call when done. Returns `{status, next_action, resume_agent_id}`.
 ### validate_with_graph(modified_files, branch, project_path=None, project_name=None) -> Dict
 Graph-enhanced validation (impact analysis, Skill compliance, test coverage).
 
-### get_next_dispatch(parent_id, project_name, project_path) -> Dict
+### get_next_dispatch(parent_id, project_name, project_path, trace_id=None) -> Dict
 Auto-dispatch next agent in the Executor → Critic → Memory pipeline.
 Returns structured instruction for the main conversation to execute.
+When `trace_id` is provided, the dispatch/status decision is recorded as a local
+span with the prompt redacted and only `prompt_length` stored.
 
 ```python
 inst = get_next_dispatch(epic_id, 'my-project', '/path/to/project')
@@ -116,6 +126,131 @@ result = recipe_unit_tests('my-project', '/path/to/project', target_path='src/')
 
 ### run_recipe(name, **kwargs) -> Dict
 Run recipe by name. Available: `'unit_tests'`.
+
+---
+
+## Harness Trace & Eval API
+
+### start_trace(workflow_name, project=None, group_id=None, metadata=None) -> str
+Create a local trace for one end-to-end agent workflow.
+
+### start_span(trace_id, name, span_type, parent_span_id=None, task_id=None, input=None, metadata=None) -> str
+Create a span for a dispatch, tool call, validation, memory write, or other operation.
+
+### finish_span(span_id, status='completed', output=None, error=None, metadata=None) -> Dict
+Finish a span and store output or error details.
+
+### finish_trace(trace_id, status='completed', metadata=None) -> Dict
+Finish a trace and return the trace with ordered spans.
+
+### summarize_trace(trace_id) -> Dict
+Return span counts by type/status and guardrail violation count.
+
+### list_guardrail_events(project=None, limit=20, only_violations=True) -> List[Dict]
+List recent guardrail spans across traces.
+
+### export_traces_jsonl(path, trace_id=None, project=None, limit=100) -> int
+Export trace/span events as newline-delimited JSON for external processors.
+
+### export_traces_otel_jsonl(path, trace_id=None, project=None, limit=100) -> int
+Export OpenTelemetry-style span records as JSONL. The adapter follows the
+current OpenTelemetry GenAI semantic-convention shape where applicable, while
+keeping HAN-specific fields under `han.*`.
+
+### evaluate_trajectory(actual, expected, mode='exact') -> Dict
+Run deterministic exact or subsequence trajectory scoring.
+
+### run_trajectory_dataset(path=None, dataset=None) -> Dict
+Run all golden trajectory cases and return aggregate pass/fail metrics.
+
+### evaluate_trace(trace_id, expected, mode='exact') -> Dict
+Score a stored local trace against an expected dispatch sequence.
+
+### evaluate_trace_jsonl(path, expected, mode='exact', trace_id=None) -> Dict
+Score an exported trace JSONL file against an expected dispatch sequence.
+
+```python
+trace_id = start_trace('unit-test recipe', project='my-project')
+span_id = start_span(trace_id, 'dispatch executor', 'dispatch',
+                     metadata={'subagent_type': 'executor'})
+finish_span(span_id, output={'subagent_type': 'executor'})
+trace = finish_trace(trace_id)
+
+agents = extract_agents_from_trace(trace)
+score = evaluate_trajectory(agents, ['executor'], mode='exact')
+```
+
+CLI:
+
+```bash
+python cli/main.py eval
+python cli/main.py eval --dataset evals/trajectories.json
+python cli/main.py eval --trace trace_abc --expected executor,critic,memory
+python cli/main.py eval --trace-jsonl /tmp/han-traces.jsonl --expected executor --mode subsequence
+python cli/main.py traces
+python cli/main.py traces --guardrails
+python cli/main.py traces --export-jsonl /tmp/han-traces.jsonl
+python cli/main.py traces --export-otel-jsonl /tmp/han-otel.jsonl
+python cli/main.py guard --agent executor --command "rm -rf /tmp/project"
+python cli/main.py guard --agent executor --mode warn --command "rm -rf /tmp/project"
+python cli/main.py guard --agent critic --path servers/facade.py --operation write
+python cli/main.py reviews
+python cli/main.py reviews --enqueue-trace trace_abc
+python cli/main.py reviews --resolve review_abc --reviewer alice --resolution approved
+python cli/main.py migrate --history
+```
+
+---
+
+## Guardrails API
+
+### get_agent_policy(agent) -> Dict
+Return the default provider-neutral policy for an agent.
+
+### check_command(command, agent='executor') -> Dict
+Classify shell command risk against denied patterns and network approval policy.
+
+### check_path(path, agent='executor', operation='read') -> Dict
+Classify read/write path access against allow/deny patterns.
+
+### enforce_result(check_result, mode=None) -> Dict
+Convert a guardrail check into `allow`, `warn`, or `block` enforcement. The
+default mode comes from `HAN_GUARDRAIL_MODE` and falls back to `warn`.
+
+Dispatch prompts include a concise guardrail policy block for executor, critic,
+and memory agents. `hooks/pre_tool.py` can deny or ask on risky Bash/Write/Edit
+operations before execution in hosts that support PreToolUse decisions.
+`hooks/post_task.py` still records lifecycle events and adds post-tool guardrail
+context where available.
+
+---
+
+## Human Review Queue API
+
+### create_review_item(kind, reason, project=None, severity='medium', task_id=None, trace_id=None, span_id=None, payload=None) -> str
+Create or reuse an open review item.
+
+### list_review_items(status='open', project=None, limit=20) -> List[Dict]
+List open, resolved, or all review items.
+
+### resolve_review_item(item_id, reviewer, resolution, notes=None) -> Dict
+Close a review item with reviewer metadata.
+
+### enqueue_trace_reviews(trace_id) -> Dict
+Create review items from warning/error spans in a trace.
+
+Blocked Critic retries create high-severity review items automatically. Guardrail
+PreToolUse violations create review items when a task or trace id is available.
+
+---
+
+## Migrations API
+
+### apply_pending_migrations() -> Dict
+Apply numbered SQL migrations from `migrations/` and return applied versions.
+
+### get_migration_history() -> List[Dict]
+Return applied schema versions.
 
 ---
 

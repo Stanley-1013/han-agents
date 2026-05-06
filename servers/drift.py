@@ -125,7 +125,7 @@ class DriftReport:
 # Detection Logic
 # =============================================================================
 
-def get_drift_context(project: str, project_dir: str) -> Dict:
+def get_drift_context(project: str, project_dir: str = None) -> Dict:
     """
     取得 Drift 偵測所需的 context 資料
 
@@ -148,6 +148,8 @@ def get_drift_context(project: str, project_dir: str) -> Dict:
     """
     from servers.ssot import parse_skill_links, load_skill, find_skill_dir
     from servers.code_graph import get_code_nodes, get_code_graph_stats
+
+    project_dir = project_dir or os.getcwd()
 
     result = {
         'skill_content': '',
@@ -194,7 +196,7 @@ def get_drift_context(project: str, project_dir: str) -> Dict:
     return result
 
 
-def detect_all_drifts(project: str, project_dir: str) -> DriftReport:
+def detect_all_drifts(project: str, project_dir: str = None) -> DriftReport:
     """
     偵測專案所有 Skill-Code 偏差（簡化版）
 
@@ -205,6 +207,7 @@ def detect_all_drifts(project: str, project_dir: str) -> DriftReport:
         project: 專案名稱（用於 Code Graph 查詢）
         project_dir: 專案目錄路徑（用於讀取專案 Skill）
     """
+    project_dir = project_dir or os.getcwd()
     context = get_drift_context(project, project_dir)
 
     if context['error']:
@@ -259,11 +262,12 @@ def detect_all_drifts(project: str, project_dir: str) -> DriftReport:
     )
 
 
-def detect_flow_drift(project: str, flow_name: str, project_dir: str) -> DriftReport:
+def detect_flow_drift(project: str, flow_name: str, project_dir: str = None) -> DriftReport:
     """偵測特定 Flow 的偏差"""
     from servers.ssot import load_flow_spec
     from servers.code_graph import get_code_nodes
 
+    project_dir = project_dir or os.getcwd()
     drifts = []
     drift_id = 0
 

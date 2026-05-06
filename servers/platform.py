@@ -195,8 +195,35 @@ def setup_agents(platform_key=None, base_dir=None):
     return copied
 
 
+def _is_han_hook(entry, script_name):
+    for hook in entry.get('hooks', []):
+        command = hook.get('command', '')
+        if script_name in command:
+            return True
+    return False
+
+
+def _upsert_hook(settings, event_name, hook_cmd, matcher=""):
+    hooks_list = settings.setdefault('hooks', {}).setdefault(event_name, [])
+    script_name = os.path.basename(hook_cmd.split()[-1])
+    existing = [
+        h for h in hooks_list
+        if h.get('matcher') in (matcher, 'Task') and _is_han_hook(h, script_name)
+    ]
+    hook_entry = [{"type": "command", "command": hook_cmd, "timeout": 30}]
+    if existing:
+        for h in existing:
+            h['matcher'] = matcher
+            h['hooks'] = hook_entry
+    else:
+        hooks_list.append({
+            "matcher": matcher,
+            "hooks": hook_entry,
+        })
+
+
 def setup_hooks(platform_key=None, base_dir=None):
-    """註冊 PostToolUse hook 到 settings.json（冪等）
+    """註冊 HAN hooks 到 settings.json（冪等）
 
     Returns:
         bool: True 表示已設定/已存在，False 表示平台不支援
@@ -214,7 +241,8 @@ def setup_hooks(platform_key=None, base_dir=None):
     if not settings_path:
         return False
 
-    hook_cmd = f"python3 {os.path.join(base_dir, 'hooks', 'post_task.py')}"
+    post_hook_cmd = f"python3 {os.path.join(base_dir, 'hooks', 'post_task.py')}"
+    pre_hook_cmd = f"python3 {os.path.join(base_dir, 'hooks', 'pre_tool.py')}"
 
     settings = {}
     if os.path.exists(settings_path):
@@ -224,19 +252,10 @@ def setup_hooks(platform_key=None, base_dir=None):
         except (json.JSONDecodeError, IOError):
             settings = {}
 
-    hooks_list = settings.setdefault('hooks', {}).setdefault('PostToolUse', [])
-
-    # 檢查是否已有 Task matcher
-    existing = [h for h in hooks_list if h.get('matcher') == 'Task']
-    if existing:
-        # 更新指令路徑
-        for h in existing:
-            h['hooks'] = [{"type": "command", "command": hook_cmd, "timeout": 30}]
-    else:
-        hooks_list.append({
-            "matcher": "Task",
-            "hooks": [{"type": "command", "command": hook_cmd, "timeout": 30}]
-        })
+    # Use empty matchers so hooks can observe Task lifecycle and guardrail-able
+    # tool events in hosts that provide them.
+    _upsert_hook(settings, 'PreToolUse', pre_hook_cmd, matcher="")
+    _upsert_hook(settings, 'PostToolUse', post_hook_cmd, matcher="")
 
     with open(settings_path, 'w', encoding='utf-8') as f:
         json.dump(settings, f, indent=2, ensure_ascii=False)

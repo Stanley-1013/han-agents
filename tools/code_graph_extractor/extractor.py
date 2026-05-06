@@ -239,7 +239,7 @@ class RegexExtractor:
             re.MULTILINE
         ),
         'class': re.compile(
-            r'^\s*(?:public\s+|private\s+|protected\s+)?(?:abstract\s+)?(?:final\s+)?(?:static\s+)?class\s+(\w+)(?:<[^>]+>)?(?:\s+extends\s+([\w.<>]+))?(?:\s+implements\s+([\w\s,.<>]+))?\s*\{',
+            r'^\s*(?:public\s+|private\s+|protected\s+)?(?:abstract\s+)?(?:final\s+)?(?:static\s+)?class\s+(\w+)(?:<(?:[^<>]|<[^<>]*>)*>)?(?:\s+extends\s+([\w.<>]+))?(?:\s+implements\s+([\w\s,.<>]+))?\s*\{',
             re.MULTILINE
         ),
         'interface': re.compile(

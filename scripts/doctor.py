@@ -89,6 +89,8 @@ def check_database() -> DiagnosticResult:
         )
 
     try:
+        from servers.migrations import apply_pending_migrations
+        apply_pending_migrations()
         import sqlite3
         conn = sqlite3.connect(db_path)
         cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -97,7 +99,9 @@ def check_database() -> DiagnosticResult:
 
         required_tables = [
             'tasks', 'long_term_memory', 'working_memory',
-            'project_nodes', 'project_edges', 'code_nodes', 'code_edges'
+            'project_nodes', 'project_edges', 'code_nodes', 'code_edges',
+            'agent_traces', 'agent_spans', 'human_review_queue',
+            'schema_migrations'
         ]
 
         missing = [t for t in required_tables if t not in tables]
@@ -128,6 +132,11 @@ def check_servers() -> DiagnosticResult:
         'servers.tasks',
         'servers.memory',
         'servers.facade',
+        'servers.tracing',
+        'servers.evals',
+        'servers.guardrails',
+        'servers.migrations',
+        'servers.reviews',
     ]
 
     failed = []
@@ -204,6 +213,93 @@ def check_code_graph() -> DiagnosticResult:
         )
 
 
+def check_harness_evals() -> DiagnosticResult:
+    """檢查內建 harness eval dataset 可執行。"""
+    try:
+        from servers.evals import run_trajectory_dataset
+        result = run_trajectory_dataset()
+        if not result['passed']:
+            return DiagnosticResult(
+                name="Harness Evals",
+                status=Status.ERROR,
+                message=f"{result['failed_count']} of {result['total']} trajectory evals failed"
+            )
+        return DiagnosticResult(
+            name="Harness Evals",
+            status=Status.OK,
+            message=f"{result['passed_count']}/{result['total']} trajectory evals passed"
+        )
+    except Exception as e:
+        return DiagnosticResult(
+            name="Harness Evals",
+            status=Status.ERROR,
+            message=f"Check failed: {str(e)}"
+        )
+
+
+def check_schema_version() -> DiagnosticResult:
+    """檢查 schema migration metadata."""
+    try:
+        from servers.migrations import CURRENT_SCHEMA_VERSION, apply_pending_migrations, get_schema_version
+        apply_pending_migrations()
+        version = get_schema_version()
+        if version < CURRENT_SCHEMA_VERSION:
+            return DiagnosticResult(
+                name="Schema Version",
+                status=Status.ERROR,
+                message=f"Schema version {version}, expected {CURRENT_SCHEMA_VERSION}"
+            )
+        return DiagnosticResult(
+            name="Schema Version",
+            status=Status.OK,
+            message=f"Version {version}"
+        )
+    except Exception as e:
+        return DiagnosticResult(
+            name="Schema Version",
+            status=Status.ERROR,
+            message=f"Check failed: {str(e)}"
+        )
+
+
+def check_hooks() -> DiagnosticResult:
+    """檢查 harness hook 檔案存在且可載入。"""
+    try:
+        import importlib.util
+
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        hook_paths = [
+            os.path.join(base_dir, 'hooks', 'post_task.py'),
+            os.path.join(base_dir, 'hooks', 'pre_tool.py'),
+            os.path.join(base_dir, 'hooks', 'harness_guardrail.py'),
+        ]
+        missing = [path for path in hook_paths if not os.path.exists(path)]
+        if missing:
+            return DiagnosticResult(
+                name="Harness Hooks",
+                status=Status.ERROR,
+                message=f"Missing hooks: {', '.join(os.path.basename(p) for p in missing)}"
+            )
+
+        for path in hook_paths:
+            name = os.path.splitext(os.path.basename(path))[0]
+            spec = importlib.util.spec_from_file_location(f"han_hook_{name}", path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+        return DiagnosticResult(
+            name="Harness Hooks",
+            status=Status.OK,
+            message=f"{len(hook_paths)} hook modules loaded"
+        )
+    except Exception as e:
+        return DiagnosticResult(
+            name="Harness Hooks",
+            status=Status.ERROR,
+            message=f"Check failed: {str(e)}"
+        )
+
+
 def run_diagnostics() -> List[DiagnosticResult]:
     """執行診斷"""
     checks = [
@@ -211,6 +307,9 @@ def run_diagnostics() -> List[DiagnosticResult]:
         check_servers,
         check_registry,
         check_code_graph,
+        check_harness_evals,
+        check_schema_version,
+        check_hooks,
     ]
 
     results = []

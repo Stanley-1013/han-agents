@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "description": "Golden deterministic trajectory cases for HAN agent harness workflows.",
+  "cases": [
+    {
+      "id": "unit_tests_happy_path",
+      "description": "Unit-test recipe executes, validates, then stores lessons.",
+      "mode": "exact",
+      "actual": ["executor", "critic", "memory"],
+      "expected": ["executor", "critic", "memory"]
+    },
+    {
+      "id": "unit_tests_retry_after_rejection",
+      "description": "Rejected executor work retries before final memory storage.",
+      "mode": "exact",
+      "actual": ["executor", "critic", "executor", "critic", "memory"],
+      "expected": ["executor", "critic", "executor", "critic", "memory"]
+    },
+    {
+      "id": "dispatch_may_include_planning_prefix",
+      "description": "Higher-level orchestration may prepend planning while preserving critical worker flow.",
+      "mode": "subsequence",
+      "actual": ["pfc", "executor", "critic", "memory"],
+      "expected": ["executor", "critic", "memory"]
+    },
+    {
+      "id": "recipe_unit_tests_story_batch",
+      "description": "Unit-test recipe can run multiple executor/critic pairs before memory finalization.",
+      "mode": "subsequence",
+      "actual": ["executor", "critic", "executor", "critic", "executor", "critic", "memory"],
+      "expected": ["executor", "critic", "memory"]
+    },
+    {
+      "id": "critic_rejection_requires_retry_before_memory",
+      "description": "Memory must not run between a rejected critic and the retry executor.",
+      "mode": "exact",
+      "actual": ["executor", "critic", "executor", "critic", "memory"],
+      "expected": ["executor", "critic", "executor", "critic", "memory"]
+    },
+    {
+      "id": "guardrail_warning_does_not_replace_validation",
+      "description": "Guardrail warning spans may appear around dispatch but do not replace Critic validation.",
+      "mode": "subsequence",
+      "actual": ["executor", "guardrail", "critic", "memory"],
+      "expected": ["executor", "critic", "memory"]
+    }
+  ]
+}

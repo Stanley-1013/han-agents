@@ -48,8 +48,15 @@ PFC (規劃) → Executor (執行) → Critic (驗證) → Memory (記錄)
 ~/.claude/skills/han-agents/
 ├── SKILL.md                 # ⭐ 入口，先看這個
 ├── servers/facade.py        # ⭐ 主要 API，所有操作從這裡
+├── servers/tracing.py       # Harness traces / spans / exports
+├── servers/evals.py         # Deterministic trajectory evals
+├── servers/guardrails.py    # Agent command/path policy
+├── servers/reviews.py       # Human review queue
+├── hooks/pre_tool.py        # PreToolUse guardrail blocking
+├── hooks/post_task.py       # Task lifecycle + post-tool observation
+├── migrations/              # Numbered schema migrations
 ├── brain/brain.db           # SQLite 資料庫
-├── reference/ARCHITECTURE.md # ⭐ 架構設計詳解
+├── docs/HARNESS_ROADMAP.md  # Harness maturity state and next steps
 └── scripts/install.py       # 安裝腳本
 ```
 
@@ -82,6 +89,19 @@ python "$env:USERPROFILE\.claude\skills\han-agents\scripts\install.py" --skip-pr
 ```bash
 # 根據你的平台調整路徑
 python ~/.claude/skills/han-agents/scripts/doctor.py
+python ~/.claude/skills/han-agents/cli/main.py migrate --history
+python ~/.claude/skills/han-agents/cli/main.py eval
+```
+
+上線前最小檢查：
+
+```bash
+pytest -q
+python scripts/doctor.py
+python cli/main.py eval
+python cli/main.py guard --agent executor --command "pytest -q"
+python cli/main.py traces --export-jsonl /tmp/han-traces.jsonl
+python cli/main.py traces --export-otel-jsonl /tmp/han-otel.jsonl
 ```
 
 ### 2. 常用 API
@@ -94,6 +114,9 @@ sys.path.insert(0, os.path.expanduser('~/.claude/skills/han-agents'))
 from servers.facade import sync, get_full_context, check_drift
 from servers.tasks import create_task, get_task_progress
 from servers.memory import search_memory_semantic, store_memory
+from servers.tracing import start_trace, finish_trace
+from servers.evals import evaluate_trace
+from servers.reviews import list_review_items
 
 # 同步 Code Graph
 sync('/path/to/project', 'project-name')
@@ -118,6 +141,25 @@ Task(
 )
 ```
 
+### 4. Harness 工作流範例
+
+```python
+from servers.facade import get_next_dispatch
+from servers.tracing import start_trace, finish_trace
+from servers.evals import evaluate_trace
+
+trace_id = start_trace('unit_tests', project='my-project')
+
+while True:
+    inst = get_next_dispatch(epic_id, 'my-project', '/path/to/project', trace_id=trace_id)
+    if inst['action'] != 'dispatch':
+        break
+    Task(subagent_type=inst['subagent_type'], prompt=inst['prompt'])
+
+finish_trace(trace_id)
+result = evaluate_trace(trace_id, ['executor', 'critic', 'memory'], mode='subsequence')
+```
+
 ---
 
 ## 資料庫表格速查（2 分鐘）
@@ -130,6 +172,10 @@ Task(
 | `project_nodes` | SKILL.md 解析的節點 |
 | `long_term_memory` | 長期記憶 |
 | `working_memory` | 工作記憶 |
+| `agent_traces` | Workflow trace |
+| `agent_spans` | Dispatch/tool/guardrail spans |
+| `human_review_queue` | 需要人工處理的 blocked/failed/warning 項目 |
+| `schema_migrations` | 已套用的 schema 版本 |
 
 ---
 
@@ -168,13 +214,46 @@ from servers.tasks import get_task_progress
 progress = get_task_progress(project='my-project')
 ```
 
+### 查看 harness traces
+
+```bash
+python cli/main.py traces
+python cli/main.py traces trace_abc
+python cli/main.py traces --guardrails
+python cli/main.py eval --trace trace_abc --expected executor,critic,memory
+```
+
+### 處理人工 review queue
+
+```bash
+python cli/main.py reviews
+python cli/main.py reviews --show review_abc
+python cli/main.py reviews --resolve review_abc --reviewer alice --resolution approved --notes "Looks good"
+python cli/main.py reviews --enqueue-trace trace_abc
+```
+
+### 套用 migration
+
+```bash
+python cli/main.py migrate --history
+```
+
+新增 schema 時：
+
+1. 在 `migrations/` 新增下一個編號 SQL。
+2. 更新 `servers/migrations.py` 的 `CURRENT_SCHEMA_VERSION` 與 `MIGRATIONS`。
+3. 同步更新 `brain/schema.sql` 與 `assets/schema.sql`，讓新安裝不用重放歷史才能完整。
+4. 加上 `tests/test_migrations.py` 或相關 API 測試。
+
 ---
 
 ## 遇到問題？
 
 1. **先跑診斷**：`python scripts/doctor.py`
-2. **查文檔**：`reference/TROUBLESHOOTING.md`
-3. **看架構**：`reference/ARCHITECTURE.md`
+2. **跑 harness eval**：`python cli/main.py eval`
+3. **查 review queue**：`python cli/main.py reviews`
+4. **查文檔**：`reference/TROUBLESHOOTING.md`
+5. **看 roadmap**：`docs/HARNESS_ROADMAP.md`
 
 ---
 
@@ -186,6 +265,7 @@ progress = get_task_progress(project='my-project')
 | 所有 API | `reference/API_REFERENCE.md` |
 | 代理定義 | `reference/agents/*.md` |
 | 記憶操作 | `reference/MEMORY_GUIDE.md` |
+| Harness 狀態 | `docs/HARNESS_ROADMAP.md` |
 | 完整白皮書 | `docs/WHITEPAPER.md` |
 
 ---

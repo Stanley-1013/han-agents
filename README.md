@@ -65,6 +65,7 @@ Three layers work together:
 - **Drift Detection** — compare Skill definitions against actual code implementation
 - **Semantic Memory** — FTS5 + embedding search with LLM reranking
 - **Task Lifecycle** — full hierarchy with create, execute, validate, and document phases
+- **Harness Tracing & Evals** — local trace/span storage plus deterministic trajectory scoring
 - **Auto Tech Stack Detection** — `ensure_project()` detects languages, frameworks, and test tools
 - **Micro-Nap Checkpoints** — save and resume long-running tasks across conversations
 
@@ -168,6 +169,7 @@ pip install -r requirements-ast.txt
 
 ```bash
 python scripts/doctor.py
+python cli/main.py eval
 ```
 
 ---
@@ -186,6 +188,8 @@ from servers.tasks import create_task, create_subtask, get_task_progress
 from servers.recipes import recipe_unit_tests, run_recipe
 from servers.memory import search_memory_semantic, store_memory
 from servers.project import ensure_project
+from servers.tracing import start_trace, finish_trace
+from servers.evals import evaluate_trajectory, evaluate_trace, extract_agents_from_trace
 ```
 
 ### Initialize a Project
@@ -208,14 +212,17 @@ One call to generate a full task tree, then a loop to run it:
 ```python
 # 1. Recipe auto-analyzes the project and builds the task tree
 result = recipe_unit_tests('my-project', '/path/to/project')
+trace_id = start_trace('unit_tests recipe', project='my-project')
 
 # 2. Dispatch loop — repeat until all tasks are done
 while True:
-    inst = get_next_dispatch(result['epic_id'], 'my-project', '/path/to/project')
+    inst = get_next_dispatch(result['epic_id'], 'my-project', '/path/to/project', trace_id=trace_id)
     if inst['action'] != 'dispatch':
         break
     # Claude Code: dispatch via Task tool
     Task(subagent_type=inst['subagent_type'], prompt=inst['prompt'])
+
+trace = finish_trace(trace_id)
 ```
 
 `get_next_dispatch()` handles the full lifecycle automatically:
@@ -224,6 +231,7 @@ while True:
 - Rejected tasks → retry with feedback context
 - All done → Memory agent stores lessons learned
 - Returns `model_tier` for platform-specific model selection
+- With `trace_id`, records redacted dispatch/status spans for replay and evals
 
 ---
 
@@ -361,6 +369,23 @@ python cli/main.py <command>
 | `dashboard` | Show full system dashboard |
 | `ssot-sync` | Sync SSOT Index to Graph |
 | `install-hooks` | Install Git hooks for auto-sync |
+| `eval` | Run deterministic harness trajectory evals |
+| `traces` | Inspect local traces and guardrail events |
+| `reviews` | Inspect and resolve human review queue items |
+| `migrate` | Apply numbered schema migrations |
+| `guard` | Check guardrail policy for commands and paths |
+
+Examples:
+
+```bash
+python cli/main.py guard --agent executor --command "rm -rf /tmp/project"
+python cli/main.py guard --agent executor --mode warn --command "rm -rf /tmp/project"
+python cli/main.py eval --trace trace_abc --expected executor,critic,memory
+python cli/main.py traces --export-jsonl /tmp/han-traces.jsonl
+python cli/main.py traces --export-otel-jsonl /tmp/han-otel.jsonl
+python cli/main.py reviews
+python cli/main.py migrate --history
+```
 
 ### Utility Scripts
 
@@ -423,6 +448,7 @@ HAN uses SQLite at `<han-agents>/brain/brain.db`, auto-created on first use.
 | [reference/WORKFLOW_GUIDE.md](reference/WORKFLOW_GUIDE.md) | Workflow patterns |
 | [reference/GRAPH_GUIDE.md](reference/GRAPH_GUIDE.md) | Graph operations |
 | [reference/TROUBLESHOOTING.md](reference/TROUBLESHOOTING.md) | Common issues and fixes |
+| [docs/HARNESS_ROADMAP.md](docs/HARNESS_ROADMAP.md) | Trace/eval/guardrail maturity roadmap |
 | [docs/QUICKSTART_HANDOVER.md](docs/QUICKSTART_HANDOVER.md) | Quick start handover guide |
 | [docs/WHITEPAPER.md](docs/WHITEPAPER.md) | Architecture whitepaper |
 

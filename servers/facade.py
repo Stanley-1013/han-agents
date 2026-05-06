@@ -454,7 +454,7 @@ def get_context(branch: Dict, project_path: str = None, project_name: str = None
     return "\n".join(lines) if lines else f"No context available for branch: {branch}"
 
 
-def check_drift(project_path: str, project_name: str = None, flow_name: str = None) -> Dict:
+def check_drift(project_path: str = None, project_name: str = None, flow_name: str = None) -> Dict:
     """
     檢查 Skill vs Code 偏差
 
@@ -482,6 +482,7 @@ def check_drift(project_path: str, project_name: str = None, flow_name: str = No
     """
     from servers.drift import detect_all_drifts, detect_flow_drift
 
+    project_path = project_path or os.getcwd()
     project_name = project_name or os.path.basename(os.path.abspath(project_path))
 
     # 使用 drift.py 的完整偵測
@@ -580,6 +581,9 @@ def get_full_context(branch: Dict, project_path: str = None, project_name: str =
             'drifts': []
         }
     }
+    # Backward-compatible alias for older callers/tests that still name the
+    # intent layer "ssot". Keep it as the same object so mutations stay in sync.
+    result['ssot'] = result['skill']
 
     # 1. Skill 層
     try:
@@ -1306,10 +1310,25 @@ def finish_validation(
 
             log_agent_action('critic', original_task_id, 'blocked',
                             f'Exceeded {MAX_RETRIES} retries, needs human review')
+            from servers.reviews import create_review_item
+            review_id = create_review_item(
+                kind='critic_rejection',
+                reason=f'Exceeded {MAX_RETRIES} validation retries',
+                project=original_task.get('project'),
+                severity='high',
+                task_id=original_task_id,
+                payload={
+                    'critic_task_id': task_id,
+                    'issues': issues or [],
+                    'suggestions': suggestions or [],
+                    'retry_count': retry_count,
+                },
+            )
 
             return {
                 'status': 'blocked',
                 'next_action': 'human_review',
+                'review_id': review_id,
                 'message': f"Task {original_task_id} exceeded {MAX_RETRIES} retries, needs human review"
             }
 
@@ -1484,6 +1503,19 @@ def manual_validate(task_id: str, status: str, reviewer: str) -> Dict:
     mark_validated(task_id, status, validator_task_id=f'human:{reviewer}')
     log_agent_action(f'human:{reviewer}', task_id, f'manual_{status}', f'Manual review by {reviewer}')
 
+    try:
+        from servers.reviews import list_review_items, resolve_review_item
+        for item in list_review_items(status='open', limit=100):
+            if item.get('task_id') == task_id:
+                resolve_review_item(
+                    item['id'],
+                    reviewer=reviewer,
+                    resolution=f'manual_{status}',
+                    notes=f"Task {task_id} manually {status}",
+                )
+    except Exception:
+        pass
+
     # 推進 phase
     if status == 'approved':
         advance_task_phase(task_id, 'documentation')
@@ -1520,7 +1552,8 @@ _AGENT_TIERS = {
 def get_next_dispatch(
     parent_id: str,
     project_name: str,
-    project_path: str
+    project_path: str,
+    trace_id: str = None
 ) -> Dict:
     """取得下一個要派發的 agent 指令
 
@@ -1531,6 +1564,7 @@ def get_next_dispatch(
         parent_id: 根任務 ID（epic 或 parent task）
         project_name: 專案名稱
         project_path: 專案目錄路徑
+        trace_id: 可選，本地 trace id。提供時會記錄 dispatch/status span。
 
     Returns:
         {
@@ -1552,11 +1586,11 @@ def get_next_dispatch(
     # 取得根任務，判斷是否為 epic
     root_task = get_task(parent_id)
     if not root_task:
-        return {
+        return _record_dispatch_decision(trace_id, parent_id, project_name, project_path, {
             'action': 'done',
             'progress': '0/0',
             'message': f'Task not found: {parent_id}',
-        }
+        })
 
     is_epic = root_task.get('task_level') == 'epic'
 
@@ -1593,7 +1627,7 @@ def get_next_dispatch(
             critic_prompt = _build_critic_prompt(
                 critic_task, project_name, project_path
             )
-            return {
+            return _record_dispatch_decision(trace_id, parent_id, project_name, project_path, {
                 'action': 'dispatch',
                 'subagent_type': 'critic',
                 'model_tier': _AGENT_TIERS['critic'],
@@ -1601,7 +1635,7 @@ def get_next_dispatch(
                 'task_id': critic_task['id'],
                 'progress': f'{total_done}/{total_all} tasks complete',
                 'message': f"Validating: {task['description'][:60]}",
-            }
+            })
 
     # 2. 檢查被 reject 需重做的任務
     for sid in story_ids:
@@ -1613,7 +1647,7 @@ def get_next_dispatch(
                 task, project_name, project_path,
                 rejection_context=task.get('_rejection_context')
             )
-            return {
+            return _record_dispatch_decision(trace_id, parent_id, project_name, project_path, {
                 'action': 'dispatch',
                 'subagent_type': 'executor',
                 'model_tier': _AGENT_TIERS['executor'],
@@ -1621,7 +1655,7 @@ def get_next_dispatch(
                 'task_id': task['id'],
                 'progress': f"{progress['done']}/{progress['total']} tasks complete",
                 'message': f"Retrying: {task['description'][:60]}",
-            }
+            })
 
     # 3. 檢查下一個 pending 任務
     for sid in story_ids:
@@ -1631,7 +1665,7 @@ def get_next_dispatch(
             prompt = _build_executor_prompt(
                 next_task, project_name, project_path
             )
-            return {
+            return _record_dispatch_decision(trace_id, parent_id, project_name, project_path, {
                 'action': 'dispatch',
                 'subagent_type': next_task.get('assigned_agent', 'executor'),
                 'model_tier': _AGENT_TIERS.get(
@@ -1641,7 +1675,7 @@ def get_next_dispatch(
                 'task_id': next_task['id'],
                 'progress': f"{progress['done']}/{progress['total']} tasks complete",
                 'message': f"Executing: {next_task['description'][:60]}",
-            }
+            })
 
     # 4. 統計總進度
     for sid in story_ids:
@@ -1657,7 +1691,7 @@ def get_next_dispatch(
             mem_task_id, mem_prompt = _build_memory_prompt(
                 parent_id, project_name
             )
-            return {
+            return _record_dispatch_decision(trace_id, parent_id, project_name, project_path, {
                 'action': 'dispatch',
                 'subagent_type': 'memory',
                 'model_tier': _AGENT_TIERS['memory'],
@@ -1665,42 +1699,100 @@ def get_next_dispatch(
                 'task_id': mem_task_id,
                 'progress': f'{total_done}/{total_all} tasks complete',
                 'message': 'All tasks done. Storing lessons learned.',
-            }
+            })
         if memory_task['status'] in ('pending', 'running'):
-            return {
+            return _record_dispatch_decision(trace_id, parent_id, project_name, project_path, {
                 'action': 'waiting',
                 'progress': f'{total_done}/{total_all} tasks complete',
                 'message': 'All tasks done. Waiting for memory task to finish.',
-            }
+            })
         if memory_task['status'] == 'done':
-            return {
+            return _record_dispatch_decision(trace_id, parent_id, project_name, project_path, {
                 'action': 'done',
                 'progress': f'{total_done}/{total_all} tasks complete',
                 'message': 'All tasks completed and validated.',
-            }
+            })
         # failed/blocked
-        return {
+        return _record_dispatch_decision(trace_id, parent_id, project_name, project_path, {
             'action': 'blocked',
             'progress': f'{total_done}/{total_all} tasks complete',
             'message': f"Memory task is {memory_task['status']}.",
-        }
+        })
 
     # 6. 有 blocked 的？
     blocked = [sid for sid in story_ids
                if get_task_progress(sid).get('failed', 0) > 0]
     if blocked:
-        return {
+        return _record_dispatch_decision(trace_id, parent_id, project_name, project_path, {
             'action': 'blocked',
             'progress': f'{total_done}/{total_all} tasks complete',
             'message': f'{len(blocked)} stories have blocked/failed tasks.',
-        }
+        })
 
     # 7. 都在跑中
-    return {
+    return _record_dispatch_decision(trace_id, parent_id, project_name, project_path, {
         'action': 'waiting',
         'progress': f'{total_done}/{total_all} tasks complete',
         'message': 'Tasks are running. Call again after agent completes.',
+    })
+
+
+def _record_dispatch_decision(
+    trace_id: str,
+    parent_id: str,
+    project_name: str,
+    project_path: str,
+    decision: Dict,
+) -> Dict:
+    """Record a dispatch/status decision without storing full prompts."""
+    if not trace_id:
+        return decision
+
+    traced_decision = dict(decision)
+    traced_decision['trace_id'] = trace_id
+
+    safe_output = {
+        key: value
+        for key, value in traced_decision.items()
+        if key != 'prompt'
     }
+    if 'prompt' in traced_decision:
+        safe_output['prompt_length'] = len(traced_decision.get('prompt') or '')
+        safe_output['prompt_redacted'] = True
+
+    action = traced_decision.get('action', 'unknown')
+    subagent_type = traced_decision.get('subagent_type')
+    span_type = 'dispatch' if action == 'dispatch' else 'workflow_status'
+    span_name = f"dispatch:{subagent_type}" if subagent_type else f"dispatch:{action}"
+    metadata = {
+        'action': action,
+        'parent_id': parent_id,
+        'project': project_name,
+    }
+    if subagent_type:
+        metadata['subagent_type'] = subagent_type
+    if traced_decision.get('model_tier'):
+        metadata['model_tier'] = traced_decision['model_tier']
+
+    try:
+        from servers.tracing import finish_span, start_span
+        span_id = start_span(
+            trace_id,
+            span_name,
+            span_type,
+            task_id=traced_decision.get('task_id'),
+            input={
+                'parent_id': parent_id,
+                'project_name': project_name,
+                'project_path': project_path,
+            },
+            metadata=metadata,
+        )
+        finish_span(span_id, output=safe_output)
+    except Exception as exc:
+        traced_decision['_trace_error'] = f"{type(exc).__name__}: {exc}"
+
+    return traced_decision
 
 
 def _get_rejected_tasks(parent_id: str) -> List[Dict]:
@@ -1774,6 +1866,7 @@ def _build_executor_prompt(
     """建構 Executor agent 的完整 prompt"""
     task_id = task['id']
     description = task.get('description', '')
+    policy_section = _build_guardrail_policy_section(task.get('assigned_agent', 'executor'))
 
     # 嘗試從 description 提取檔案路徑
     context_section = ""
@@ -1834,6 +1927,7 @@ PROJECT_PATH = "{project_path}"
 {description}
 {context_section}
 {rejection_section}
+{policy_section}
 ## Instructions
 
 1. Read relevant source files
@@ -1860,6 +1954,7 @@ def _build_critic_prompt(
     critic_task_id = critic_task['id']
     original_task_id = critic_task['original_task_id']
     description = critic_task.get('original_description', '')
+    policy_section = _build_guardrail_policy_section('critic')
 
     prompt = f'''TASK_ID = "{critic_task_id}"
 ORIGINAL_TASK_ID = "{original_task_id}"
@@ -1876,6 +1971,8 @@ Result: {critic_task.get('result', 'See code changes')}
 1. Does the output match the task description?
 2. Are there obvious errors or missing edge cases?
 3. Is the code quality acceptable?
+
+{policy_section}
 
 ## Output Format
 
@@ -1897,6 +1994,7 @@ def _build_memory_prompt(
         (memory_task_id, prompt)
     """
     from servers.tasks import create_subtask, get_task_progress
+    policy_section = _build_guardrail_policy_section('memory')
 
     # 建立 memory subtask
     memory_task_id = create_subtask(
@@ -1926,6 +2024,8 @@ Store lessons learned from the following completed tasks.
 
 {chr(10).join(completed_summaries) if completed_summaries else '(no details)'}
 
+{policy_section}
+
 ## Instructions
 
 1. Identify patterns, lessons, or reusable knowledge
@@ -1933,6 +2033,15 @@ Store lessons learned from the following completed tasks.
 3. Use category='lesson' for lessons learned, 'pattern' for patterns discovered
 '''
     return memory_task_id, prompt.strip()
+
+
+def _build_guardrail_policy_section(agent: str) -> str:
+    """Return a prompt policy block. Fail open if guardrails cannot load."""
+    try:
+        from servers.guardrails import format_policy_for_prompt
+        return "\n" + format_policy_for_prompt(agent)
+    except Exception:
+        return ""
 
 
 def _extract_file_path(description: str) -> Optional[str]:

@@ -3,6 +3,16 @@
 -- Version: 2.0.0 (Phase 2: Multi-person Collaboration)
 -- =============================================================================
 
+-- Schema migrations
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT OR IGNORE INTO schema_migrations (version, name)
+VALUES (1, 'base_schema');
+
 -- 任務管理
 CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
@@ -287,6 +297,81 @@ CREATE INDEX IF NOT EXISTS idx_code_edges_to ON code_edges(to_id);
 CREATE INDEX IF NOT EXISTS idx_code_edges_project_from_kind ON code_edges(project, from_id, kind);
 CREATE INDEX IF NOT EXISTS idx_code_edges_project_to_kind ON code_edges(project, to_id, kind);
 CREATE INDEX IF NOT EXISTS idx_file_hashes_project ON file_hashes(project);
+
+-- =============================================================================
+-- Agent Harness Tracing
+-- =============================================================================
+-- Local trace/span storage for replayable agent workflows.
+
+CREATE TABLE IF NOT EXISTS agent_traces (
+    id TEXT PRIMARY KEY,
+    workflow_name TEXT NOT NULL,
+    project TEXT,
+    group_id TEXT,
+    metadata TEXT,
+    status TEXT DEFAULT 'running',
+    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ended_at TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS agent_spans (
+    id TEXT PRIMARY KEY,
+    trace_id TEXT NOT NULL,
+    parent_span_id TEXT,
+    task_id TEXT,
+    name TEXT NOT NULL,
+    span_type TEXT NOT NULL,
+    status TEXT DEFAULT 'running',
+    input TEXT,
+    output TEXT,
+    metadata TEXT,
+    error TEXT,
+    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ended_at TIMESTAMP,
+    FOREIGN KEY (trace_id) REFERENCES agent_traces(id),
+    FOREIGN KEY (parent_span_id) REFERENCES agent_spans(id),
+    FOREIGN KEY (task_id) REFERENCES tasks(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_traces_project ON agent_traces(project);
+CREATE INDEX IF NOT EXISTS idx_agent_traces_group ON agent_traces(group_id);
+CREATE INDEX IF NOT EXISTS idx_agent_spans_trace ON agent_spans(trace_id);
+CREATE INDEX IF NOT EXISTS idx_agent_spans_parent ON agent_spans(parent_span_id);
+CREATE INDEX IF NOT EXISTS idx_agent_spans_task ON agent_spans(task_id);
+CREATE INDEX IF NOT EXISTS idx_agent_spans_type ON agent_spans(span_type);
+
+-- =============================================================================
+-- Human Review Queue
+-- =============================================================================
+-- Durable queue for blocked tasks, failed guardrails, and low-confidence verdicts.
+
+CREATE TABLE IF NOT EXISTS human_review_queue (
+    id TEXT PRIMARY KEY,
+    project TEXT,
+    kind TEXT NOT NULL,
+    severity TEXT DEFAULT 'medium',
+    status TEXT DEFAULT 'open',
+    reason TEXT NOT NULL,
+    task_id TEXT,
+    trace_id TEXT,
+    span_id TEXT,
+    payload TEXT,
+    reviewer TEXT,
+    resolution TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TIMESTAMP,
+    FOREIGN KEY (task_id) REFERENCES tasks(id),
+    FOREIGN KEY (trace_id) REFERENCES agent_traces(id),
+    FOREIGN KEY (span_id) REFERENCES agent_spans(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_human_review_status ON human_review_queue(status);
+CREATE INDEX IF NOT EXISTS idx_human_review_project ON human_review_queue(project);
+CREATE INDEX IF NOT EXISTS idx_human_review_task ON human_review_queue(task_id);
+CREATE INDEX IF NOT EXISTS idx_human_review_trace ON human_review_queue(trace_id);
+
+INSERT OR IGNORE INTO schema_migrations (version, name)
+VALUES (2, 'human_review_queue');
 
 -- FTS 觸發器
 CREATE TRIGGER IF NOT EXISTS ltm_ai AFTER INSERT ON long_term_memory BEGIN

@@ -1,0 +1,39 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.8", "3.11"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+      - name: Run tests
+        run: pytest -q
+      - name: Run deterministic harness evals
+        run: python cli/main.py eval
+      - name: Run schema migrations
+        run: python cli/main.py migrate --history
+      - name: Run guardrail preflight smoke test
+        run: python cli/main.py guard --agent executor --command "pytest -q"
+      - name: Run PreToolUse hook smoke test
+        run: |
+          printf '{"tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/project","agent":"executor"}}' | HAN_GUARDRAIL_MODE=block python hooks/pre_tool.py
+      - name: Run trace export smoke test
+        run: python cli/main.py traces --export-jsonl /tmp/han-traces.jsonl
+      - name: Run OpenTelemetry trace export smoke test
+        run: python cli/main.py traces --export-otel-jsonl /tmp/han-otel.jsonl
+      - name: Run review queue smoke test
+        run: python cli/main.py reviews

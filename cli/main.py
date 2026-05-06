@@ -18,6 +18,7 @@ Commands:
 import sys
 import os
 import argparse
+import json
 
 # 動態計算路徑，確保可以 import servers
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -26,8 +27,8 @@ sys.path.insert(0, _BASE_DIR)
 
 def cmd_doctor(args):
     """執行系統診斷"""
-    from cli.doctor import run_all_diagnostics, print_results
-    results = run_all_diagnostics()
+    from scripts.doctor import run_diagnostics, print_results
+    results = run_diagnostics()
     return print_results(results)
 
 
@@ -303,6 +304,277 @@ def cmd_dashboard(args):
     return 0
 
 
+def cmd_eval(args):
+    """Run deterministic harness evals."""
+    from servers.evals import evaluate_trace, evaluate_trace_jsonl, run_trajectory_dataset
+
+    if args.trace or args.trace_jsonl:
+        if not args.expected:
+            print("Provide --expected when evaluating a trace, e.g. executor,critic,memory.")
+            return 1
+        expected = [item.strip() for item in args.expected.split(",") if item.strip()]
+        try:
+            if args.trace:
+                result = evaluate_trace(args.trace, expected, mode=args.mode)
+            else:
+                result = evaluate_trace_jsonl(
+                    args.trace_jsonl,
+                    expected,
+                    mode=args.mode,
+                    trace_id=args.trace_id,
+                )
+        except ValueError as exc:
+            print(f"Eval error: {exc}")
+            return 1
+
+        status = "PASS" if result["passed"] else "FAIL"
+        print("=== HAN Trace Eval ===")
+        print(f"[{status}] score={result['score']} mode={result['mode']}")
+        if result.get("trace_id"):
+            print(f"Trace: {result['trace_id']}")
+        if result.get("workflow_name"):
+            print(f"Workflow: {result['workflow_name']}")
+        print(f"Expected: {result['expected']}")
+        print(f"Actual:   {result['actual']}")
+        if result.get("missing"):
+            print(f"Missing:  {result['missing']}")
+        if result.get("extra"):
+            print(f"Extra:    {result['extra']}")
+        return 0 if result["passed"] else 1
+
+    result = run_trajectory_dataset(path=args.dataset)
+    print("=== HAN Harness Evals ===")
+    print(f"Cases: {result['passed_count']}/{result['total']} passed")
+    print(f"Average score: {result['average_score']}")
+    print()
+
+    for item in result["results"]:
+        status = "PASS" if item["passed"] else "FAIL"
+        print(f"[{status}] {item.get('id') or '<unnamed>'}: score={item['score']}")
+        if not item["passed"]:
+            print(f"  expected: {item['expected']}")
+            print(f"  actual:   {item['actual']}")
+            if item.get("missing"):
+                print(f"  missing:  {item['missing']}")
+            if item.get("extra"):
+                print(f"  extra:    {item['extra']}")
+
+    return 0 if result["passed"] else 1
+
+
+def cmd_traces(args):
+    """Inspect local traces and guardrail events."""
+    from servers.tracing import (
+        export_traces_otel_jsonl,
+        export_traces_jsonl,
+        get_trace,
+        list_guardrail_events,
+        list_traces,
+        summarize_trace,
+    )
+
+    if args.export_jsonl:
+        count = export_traces_jsonl(
+            args.export_jsonl,
+            trace_id=args.trace_id,
+            project=args.project,
+            limit=args.limit,
+        )
+        print(f"Exported {count} trace event(s) to {args.export_jsonl}")
+        return 0
+
+    if args.export_otel_jsonl:
+        count = export_traces_otel_jsonl(
+            args.export_otel_jsonl,
+            trace_id=args.trace_id,
+            project=args.project,
+            limit=args.limit,
+        )
+        print(f"Exported {count} OpenTelemetry-style span event(s) to {args.export_otel_jsonl}")
+        return 0
+
+    if args.guardrails:
+        events = list_guardrail_events(
+            project=args.project,
+            limit=args.limit,
+            only_violations=not args.all_guardrails,
+        )
+        print("=== HAN Guardrail Events ===")
+        if not events:
+            print("No guardrail events found.")
+            return 0
+        for event in events:
+            output = event.get("output") or {}
+            violations = output.get("violations") or []
+            label = "WARN" if output.get("allowed") is False else "OK"
+            print(f"[{label}] {event['started_at']} {event['trace_id']} {event['name']}")
+            for violation in violations:
+                print(f"  - {violation.get('message', violation.get('type', 'violation'))}")
+        return 0
+
+    if args.trace_id:
+        trace = get_trace(args.trace_id)
+        if not trace:
+            print(f"Trace not found: {args.trace_id}")
+            return 1
+        summary = summarize_trace(args.trace_id)
+        print(f"=== Trace {trace['id']} ===")
+        print(f"Workflow: {trace['workflow_name']}")
+        print(f"Project: {trace.get('project') or '-'}")
+        print(f"Status: {trace.get('status')}")
+        print(f"Spans: {summary['span_count']} | Guardrail violations: {summary['guardrail_violations']}")
+        print()
+        for span in trace.get("spans", []):
+            metadata = span.get("metadata") or {}
+            meta_bits = []
+            if metadata.get("subagent_type"):
+                meta_bits.append(f"agent={metadata['subagent_type']}")
+            if metadata.get("violation_count") is not None:
+                meta_bits.append(f"violations={metadata['violation_count']}")
+            suffix = f" ({', '.join(meta_bits)})" if meta_bits else ""
+            print(f"- [{span['status']}] {span['span_type']} {span['name']}{suffix}")
+        return 0
+
+    traces = list_traces(project=args.project, limit=args.limit)
+    print("=== HAN Traces ===")
+    if not traces:
+        print("No traces found.")
+        return 0
+    for trace in traces:
+        summary = summarize_trace(trace["id"])
+        print(
+            f"{trace['started_at']} {trace['id']} "
+            f"{trace['workflow_name']} status={trace['status']} "
+            f"spans={summary.get('span_count', 0)} "
+            f"guardrails={summary.get('guardrail_violations', 0)}"
+        )
+    return 0
+
+
+def cmd_reviews(args):
+    """Inspect and resolve human review queue items."""
+    from servers.reviews import (
+        enqueue_trace_reviews,
+        get_review_item,
+        list_review_items,
+        resolve_review_item,
+    )
+
+    if args.enqueue_trace:
+        try:
+            result = enqueue_trace_reviews(args.enqueue_trace)
+        except ValueError as exc:
+            print(f"Review enqueue error: {exc}")
+            return 1
+        print(f"Queued {result['created_count']} review item(s) from trace {result['trace_id']}")
+        for review_id in result["review_ids"]:
+            print(f"  - {review_id}")
+        return 0
+
+    if args.resolve:
+        if not args.reviewer or not args.resolution:
+            print("Provide --reviewer and --resolution with --resolve.")
+            return 1
+        item = resolve_review_item(
+            args.resolve,
+            reviewer=args.reviewer,
+            resolution=args.resolution,
+            notes=args.notes,
+        )
+        if not item:
+            print(f"Review item not found: {args.resolve}")
+            return 1
+        print(f"Resolved {item['id']} as {item['resolution']} by {item['reviewer']}")
+        return 0
+
+    if args.show:
+        item = get_review_item(args.show)
+        if not item:
+            print(f"Review item not found: {args.show}")
+            return 1
+        print(json.dumps(item, indent=2, ensure_ascii=False, sort_keys=True))
+        return 0
+
+    items = list_review_items(
+        status=args.status,
+        project=args.project,
+        limit=args.limit,
+    )
+    print("=== HAN Human Review Queue ===")
+    if not items:
+        print("No review items found.")
+        return 0
+    for item in items:
+        print(
+            f"[{item['severity'].upper()}] {item['id']} "
+            f"{item['kind']} status={item['status']} project={item.get('project') or '-'}"
+        )
+        print(f"  {item['reason']}")
+        if item.get("task_id"):
+            print(f"  task={item['task_id']}")
+        if item.get("trace_id"):
+            print(f"  trace={item['trace_id']}")
+    return 0
+
+
+def cmd_migrate(args):
+    """Apply pending schema migrations."""
+    from servers.migrations import apply_pending_migrations, get_migration_history
+
+    result = apply_pending_migrations()
+    print("=== HAN Schema Migrations ===")
+    print(f"Current version: {result['current_version']}")
+    print(f"Expected version: {result['expected_version']}")
+    if result["applied"]:
+        print("Applied:")
+        for item in result["applied"]:
+            print(f"  - {item['version']}: {item['name']}")
+    else:
+        print("No pending migrations.")
+
+    if args.history:
+        print()
+        print("History:")
+        for item in get_migration_history():
+            print(f"  - {item['version']}: {item['name']} ({item['applied_at']})")
+    return 0 if result["current_version"] >= result["expected_version"] else 1
+
+
+def cmd_guard(args):
+    """Check guardrail policy for agents, commands, and paths."""
+    from servers.guardrails import check_command, check_path, enforce_result, get_agent_policy
+
+    if args.policy:
+        policy = get_agent_policy(args.agent)
+        print(json.dumps(policy, indent=2, ensure_ascii=False, sort_keys=True))
+        return 0
+
+    if args.guard_command:
+        result = check_command(args.guard_command, agent=args.agent)
+    elif args.path:
+        result = check_path(args.path, agent=args.agent, operation=args.operation)
+    else:
+        print("Provide --policy, --command, or --path.")
+        return 1
+
+    status = "ALLOW" if result["allowed"] else ("WARN" if args.mode == "warn" else "DENY")
+    print(f"[{status}] agent={result['agent']}")
+    if result.get("command") is not None:
+        print(f"Command: {result['command']}")
+    if result.get("path") is not None:
+        print(f"Path: {result['path']}")
+        print(f"Operation: {result['operation']}")
+
+    violations = result.get("violations") or []
+    if violations:
+        print("Violations:")
+        for violation in violations:
+            print(f"  - {violation.get('message', violation.get('type', 'violation'))}")
+
+    enforcement = enforce_result(result, mode=args.mode)
+    return enforcement["exit_code"]
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='HAN CLI - Multi-Agent Development System',
@@ -318,6 +590,11 @@ Commands:
   ssot-sync      Sync SSOT Index to Graph
   graph          Query and explore the SSOT Graph
   dashboard      Show full system dashboard
+  eval           Run deterministic harness evals
+  traces         Inspect local traces and guardrail events
+  reviews        Inspect human review queue
+  migrate        Apply schema migrations
+  guard          Check guardrail policy for commands and paths
         """
     )
 
@@ -373,6 +650,55 @@ Commands:
     parser_dash = subparsers.add_parser('dashboard', help='Show full dashboard')
     parser_dash.add_argument('-n', '--name', help='Project name')
     parser_dash.set_defaults(func=cmd_dashboard)
+
+    # eval
+    parser_eval = subparsers.add_parser('eval', help='Run deterministic harness evals')
+    parser_eval.add_argument('--dataset', help='Trajectory dataset JSON path')
+    parser_eval.add_argument('--trace', help='Evaluate a stored trace id')
+    parser_eval.add_argument('--trace-jsonl', help='Evaluate an exported trace JSONL file')
+    parser_eval.add_argument('--trace-id', help='Trace id filter for --trace-jsonl')
+    parser_eval.add_argument('--expected', help='Comma-separated expected agent sequence')
+    parser_eval.add_argument('--mode', choices=['exact', 'subsequence'], default='exact', help='Trajectory match mode')
+    parser_eval.set_defaults(func=cmd_eval)
+
+    # traces
+    parser_traces = subparsers.add_parser('traces', help='Inspect local traces')
+    parser_traces.add_argument('trace_id', nargs='?', help='Trace id to inspect')
+    parser_traces.add_argument('-p', '--project', help='Project filter')
+    parser_traces.add_argument('-l', '--limit', type=int, default=10, help='Max rows to show')
+    parser_traces.add_argument('--guardrails', action='store_true', help='Show guardrail events')
+    parser_traces.add_argument('--all-guardrails', action='store_true', help='Include allowed guardrail events')
+    parser_traces.add_argument('--export-jsonl', metavar='PATH', help='Export trace events to JSONL')
+    parser_traces.add_argument('--export-otel-jsonl', metavar='PATH', help='Export OpenTelemetry-style span JSONL')
+    parser_traces.set_defaults(func=cmd_traces)
+
+    # reviews
+    parser_reviews = subparsers.add_parser('reviews', help='Inspect human review queue')
+    parser_reviews.add_argument('-p', '--project', help='Project filter')
+    parser_reviews.add_argument('-l', '--limit', type=int, default=20, help='Max rows to show')
+    parser_reviews.add_argument('--status', default='open', help="Review status filter, or 'all'")
+    parser_reviews.add_argument('--show', help='Show one review item as JSON')
+    parser_reviews.add_argument('--enqueue-trace', help='Create review items from warning/error spans in a trace')
+    parser_reviews.add_argument('--resolve', help='Review item id to resolve')
+    parser_reviews.add_argument('--reviewer', help='Reviewer name for --resolve')
+    parser_reviews.add_argument('--resolution', help='Resolution label for --resolve')
+    parser_reviews.add_argument('--notes', help='Resolution notes for --resolve')
+    parser_reviews.set_defaults(func=cmd_reviews)
+
+    # migrate
+    parser_migrate = subparsers.add_parser('migrate', help='Apply schema migrations')
+    parser_migrate.add_argument('--history', action='store_true', help='Print migration history')
+    parser_migrate.set_defaults(func=cmd_migrate)
+
+    # guard
+    parser_guard = subparsers.add_parser('guard', help='Check guardrail policy')
+    parser_guard.add_argument('-a', '--agent', default='executor', help='Agent name (default: executor)')
+    parser_guard.add_argument('--policy', action='store_true', help='Print agent policy JSON')
+    parser_guard.add_argument('--command', dest='guard_command', help='Shell command to check')
+    parser_guard.add_argument('--path', help='Path to check')
+    parser_guard.add_argument('--operation', choices=['read', 'write'], default='read', help='Path operation')
+    parser_guard.add_argument('--mode', choices=['warn', 'block'], default='block', help='Violation enforcement mode')
+    parser_guard.set_defaults(func=cmd_guard)
 
     args = parser.parse_args()
 

@@ -46,13 +46,87 @@ def managed_connection(row_factory=False):
 
 
 def _ensure_indexes():
-    """Ensure composite indexes exist on existing databases (migration-safe)."""
+    """Ensure migration-safe schema additions exist on existing databases."""
     conn = sqlite3.connect(BRAIN_DB)
     try:
         conn.executescript("""
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            INSERT OR IGNORE INTO schema_migrations (version, name)
+            VALUES (1, 'base_schema');
+
             CREATE INDEX IF NOT EXISTS idx_code_nodes_project_file ON code_nodes(project, file_path);
             CREATE INDEX IF NOT EXISTS idx_code_edges_project_from_kind ON code_edges(project, from_id, kind);
             CREATE INDEX IF NOT EXISTS idx_code_edges_project_to_kind ON code_edges(project, to_id, kind);
+
+            CREATE TABLE IF NOT EXISTS agent_traces (
+                id TEXT PRIMARY KEY,
+                workflow_name TEXT NOT NULL,
+                project TEXT,
+                group_id TEXT,
+                metadata TEXT,
+                status TEXT DEFAULT 'running',
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ended_at TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_spans (
+                id TEXT PRIMARY KEY,
+                trace_id TEXT NOT NULL,
+                parent_span_id TEXT,
+                task_id TEXT,
+                name TEXT NOT NULL,
+                span_type TEXT NOT NULL,
+                status TEXT DEFAULT 'running',
+                input TEXT,
+                output TEXT,
+                metadata TEXT,
+                error TEXT,
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ended_at TIMESTAMP,
+                FOREIGN KEY (trace_id) REFERENCES agent_traces(id),
+                FOREIGN KEY (parent_span_id) REFERENCES agent_spans(id),
+                FOREIGN KEY (task_id) REFERENCES tasks(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_agent_traces_project ON agent_traces(project);
+            CREATE INDEX IF NOT EXISTS idx_agent_traces_group ON agent_traces(group_id);
+            CREATE INDEX IF NOT EXISTS idx_agent_spans_trace ON agent_spans(trace_id);
+            CREATE INDEX IF NOT EXISTS idx_agent_spans_parent ON agent_spans(parent_span_id);
+            CREATE INDEX IF NOT EXISTS idx_agent_spans_task ON agent_spans(task_id);
+            CREATE INDEX IF NOT EXISTS idx_agent_spans_type ON agent_spans(span_type);
+
+            CREATE TABLE IF NOT EXISTS human_review_queue (
+                id TEXT PRIMARY KEY,
+                project TEXT,
+                kind TEXT NOT NULL,
+                severity TEXT DEFAULT 'medium',
+                status TEXT DEFAULT 'open',
+                reason TEXT NOT NULL,
+                task_id TEXT,
+                trace_id TEXT,
+                span_id TEXT,
+                payload TEXT,
+                reviewer TEXT,
+                resolution TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                resolved_at TIMESTAMP,
+                FOREIGN KEY (task_id) REFERENCES tasks(id),
+                FOREIGN KEY (trace_id) REFERENCES agent_traces(id),
+                FOREIGN KEY (span_id) REFERENCES agent_spans(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_human_review_status ON human_review_queue(status);
+            CREATE INDEX IF NOT EXISTS idx_human_review_project ON human_review_queue(project);
+            CREATE INDEX IF NOT EXISTS idx_human_review_task ON human_review_queue(task_id);
+            CREATE INDEX IF NOT EXISTS idx_human_review_trace ON human_review_queue(trace_id);
+
+            INSERT OR IGNORE INTO schema_migrations (version, name)
+            VALUES (2, 'human_review_queue');
         """)
     except sqlite3.OperationalError:
         pass  # Tables may not exist yet
@@ -77,5 +151,10 @@ from .tasks import *
 from .platform import *
 from .project import *
 from .recipes import *
+from .tracing import *
+from .evals import *
+from .guardrails import *
+from .migrations import *
+from .reviews import *
 
 __version__ = "1.0.0"
